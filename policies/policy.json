@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Scope rules for the revocation proxy. Anything not matched here is denied.",
   "default_decision": "deny",
   "rules": [
@@ -28,12 +28,60 @@
       "note": "Read build logs, may contain secrets, redaction applies"
     },
     {
+      "id": "runs-artifacts",
+      "method": "GET",
+      "path": "^/runs/[^/]+/artifacts/?$",
+      "scope": "artifacts:read",
+      "risk": "medium",
+      "note": "Build artifacts may contain compiled binaries or sensitive outputs"
+    },
+    {
+      "id": "runs-cancel",
+      "method": "POST",
+      "path": "^/runs/[^/]+/cancel/?$",
+      "scope": "runs:cancel",
+      "risk": "medium",
+      "note": "Cancel a running pipeline, disrupts active work"
+    },
+    {
       "id": "runs-rerun",
       "method": "POST",
       "path": "^/runs/[^/]+/rerun/?$",
       "scope": "runs:rerun",
       "risk": "medium",
       "note": "Retrigger a pipeline, consumes CI capacity"
+    },
+    {
+      "id": "workflows-list",
+      "method": "GET",
+      "path": "^/workflows/?$",
+      "scope": "workflows:read",
+      "risk": "low",
+      "note": "List available workflow definitions"
+    },
+    {
+      "id": "workflows-disable",
+      "method": "PUT",
+      "path": "^/workflows/[^/]+/disable/?$",
+      "scope": "workflows:admin",
+      "risk": "high",
+      "note": "Disable a workflow, could hide monitoring or break CI"
+    },
+    {
+      "id": "env-vars-read",
+      "method": "GET",
+      "path": "^/environments/[^/]+/variables/?$",
+      "scope": "env:read",
+      "risk": "medium",
+      "note": "Read environment variable names, values are masked"
+    },
+    {
+      "id": "env-vars-write",
+      "method": "POST",
+      "path": "^/environments/[^/]+/variables/?$",
+      "scope": "env:write",
+      "risk": "high",
+      "note": "Modify environment variables, could inject credentials"
     },
     {
       "id": "deploy",
@@ -82,6 +130,22 @@
       "scope": "secrets:read",
       "risk": "critical",
       "note": "No agent role currently carries this scope"
+    },
+    {
+      "id": "secrets-write",
+      "method": "POST",
+      "path": "^/secrets/.*$",
+      "scope": "secrets:write",
+      "risk": "critical",
+      "note": "Create or update secrets, extreme privilege"
+    },
+    {
+      "id": "webhooks-manage",
+      "method": "POST",
+      "path": "^/hooks/?$",
+      "scope": "hooks:admin",
+      "risk": "critical",
+      "note": "Create webhooks, could exfiltrate data to external endpoints"
     }
   ]
 }
