@@ -16,6 +16,7 @@ the rails can decline to report itself, but it cannot decline to go through the
 proxy, because the proxy holds the only credentials that the target accepts.
 """
 
+import json
 import os
 import sys
 
@@ -247,8 +248,56 @@ def containment_events():
 # request path reads it back. The proxy does not import the analyzer and never
 # calls a model, because a control that can be argued with is not a control, and
 # that property is what the rest of this design rests on.
+#
+# Persisted to its own directory rather than into ledger.db. Telemetry shares
+# that file because it is at least a record of something an agent claimed;
+# interpretation is not a record at all, and keeping it out of the evidence file
+# means an operator with the database in front of them cannot mistake one for
+# the other.
 ANALYSES = {}
 ANALYSIS_LIMIT = 50
+ANALYSIS_DIR = os.path.join(DATA_DIR, "analysis")
+os.makedirs(ANALYSIS_DIR, exist_ok=True)
+
+
+def _analysis_path(jti):
+    """Path for one token's analysis, with the token id sanitised."""
+    safe = "".join(c for c in jti if c.isalnum() or c in "-_")[:80]
+    return os.path.join(ANALYSIS_DIR, safe + ".json")
+
+
+def _load_analysis(jti):
+    """Read one analysis from disk, or None. Memory is only a cache."""
+    if jti in ANALYSES:
+        return ANALYSES[jti]
+    path = _analysis_path(jti)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as handle:
+            document = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    ANALYSES[jti] = document
+    return document
+
+
+def _newest_analysis():
+    """The most recently published analysis, from memory or from disk."""
+    if ANALYSES:
+        return next(reversed(list(ANALYSES.values())), None)
+    try:
+        files = [os.path.join(ANALYSIS_DIR, name)
+                 for name in os.listdir(ANALYSIS_DIR) if name.endswith(".json")]
+    except OSError:
+        return None
+    if not files:
+        return None
+    try:
+        with open(max(files, key=os.path.getmtime)) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
 
 
 @app.post("/v1/analysis")
@@ -275,21 +324,28 @@ async def publish_analysis(request: Request):
     while len(ANALYSES) > ANALYSIS_LIMIT:
         ANALYSES.pop(next(iter(ANALYSES)))
 
+    try:
+        with open(_analysis_path(jti), "w") as handle:
+            json.dump(document, handle)
+    except OSError:
+        # Losing the copy on disk costs a restart's worth of history and
+        # nothing else. It must not fail the publication.
+        pass
+
     return {"accepted": True, "jti": jti}
 
 
 @app.get("/v1/analysis")
 def read_analysis(jti: str = None):
     """Return the analysis for one token, or the most recently published one."""
-    if jti:
-        document = ANALYSES.get(jti)
-    elif ANALYSES:
-        document = next(reversed(list(ANALYSES.values())), None)
-    else:
-        document = None
-
+    document = _load_analysis(jti) if jti else _newest_analysis()
     if document is None:
-        return {"available": False, "jti": jti, "analysed_tokens": len(ANALYSES)}
+        try:
+            stored = len([n for n in os.listdir(ANALYSIS_DIR)
+                          if n.endswith(".json")])
+        except OSError:
+            stored = 0
+        return {"available": False, "jti": jti, "analysed_tokens": stored}
     return dict(document, available=True)
 
 
@@ -316,13 +372,68 @@ def export_bundle():
 
 
 @app.get("/v1/tokens")
-def list_tokens():
-    """List the token ids seen in the ledger, newest first, for the dashboard."""
-    seen = []
-    for entry in reversed(ledger.read_all()):
-        if entry.get("jti") and entry["jti"] not in seen:
-            seen.append(entry["jti"])
-    return {"tokens": seen}
+def list_tokens(limit: int = None):
+    """List the token ids seen in the ledger, newest first, for the dashboard.
+
+    Polled by the dashboard every 1.5s and by the analyzer watcher, so it does
+    the grouping in SQL rather than scanning the whole ledger in Python.
+    """
+    return {"tokens": ledger.token_ids(limit=limit)}
+
+
+@app.get("/v1/agents")
+def list_agents():
+    """The agent registry, fetched from the broker on the dashboard's behalf.
+
+    The dashboard used to call the broker directly on port 8081. That works on
+    one machine and fails everywhere else: over an SSH tunnel it needs a second
+    forwarded port, and the agent list silently stays empty when only the
+    dashboard's own port is reachable.
+
+    It is also the wrong shape. The broker is a control plane service and a
+    browser should not need a route to it. Serving this from the same origin as
+    the page means the dashboard has exactly one dependency, which is the
+    process that served it.
+    """
+    try:
+        response = requests.get(BROKER_URL + "/agents", timeout=5,
+                                proxies=NO_PROXY_ENV)
+        response.raise_for_status()
+        return {"agents": response.json(), "broker": "reachable"}
+    except requests.RequestException as exc:
+        # Say so rather than returning an empty list. An empty registry and an
+        # unreachable broker look identical on screen and mean opposite things.
+        return JSONResponse(
+            {"agents": [], "broker": "unreachable", "detail": str(exc)},
+            status_code=503,
+        )
+
+
+@app.post("/v1/agents/{agent_id}/{action}")
+def set_agent_state(agent_id: str, action: str):
+    """Revoke or reinstate one agent, forwarded to the broker.
+
+    Note for anyone hardening this: the kill switch is now reachable on the
+    dashboard's port as well as the broker's, and neither is authenticated. That
+    was already true of the broker, so this widens nothing that was closed, but
+    it does make the case for putting authentication in front of the control
+    plane harder to defer. Who may stop an agent is itself a privileged
+    decision.
+    """
+    if action not in ("revoke", "reinstate"):
+        return JSONResponse({"error": "action must be revoke or reinstate"},
+                            status_code=400)
+    try:
+        response = requests.post(
+            "{}/{}".format(BROKER_URL, action),
+            json={"agent_id": agent_id, "reason": "from control plane"},
+            timeout=5, proxies=NO_PROXY_ENV,
+        )
+        return JSONResponse(_safe_json(response.text),
+                            status_code=response.status_code)
+    except requests.RequestException as exc:
+        return JSONResponse({"error": "broker unreachable", "detail": str(exc)},
+                            status_code=503)
 
 
 @app.get("/")
@@ -449,8 +560,6 @@ async def gateway(path: str, request: Request):
 
 
 def _safe_json(text):
-    import json
-
     try:
         return json.loads(text)
     except (ValueError, TypeError):
