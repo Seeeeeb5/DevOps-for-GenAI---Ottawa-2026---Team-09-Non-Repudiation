@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Non-Repudiation Control Plane</title>
+<style>
+  body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+  header { padding: 18px 24px; border-bottom: 1px solid #262a33; }
+  h1 { font-size: 18px; margin: 0; font-weight: 500; }
+  .sub { color: #8b93a1; font-size: 13px; margin-top: 4px; }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 0; }
+  section { padding: 18px 24px; }
+  aside { padding: 18px 24px; border-right: 1px solid #262a33; }
+  h2 { font-size: 14px; font-weight: 500; color: #8b93a1; text-transform: none; margin: 0 0 12px; }
+  .agent { border: 1px solid #262a33; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .agent .id { font-weight: 500; }
+  .agent .meta { color: #8b93a1; font-size: 12px; margin-top: 4px; }
+  button { background: #b5392f; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; margin-top: 10px; }
+  button.reinstate { background: #2f6f4f; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #8b93a1; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #262a33; }
+  td { padding: 6px 8px; border-bottom: 1px solid #1b1e25; vertical-align: top; }
+  .allow { color: #66c48a; }
+  .deny { color: #e2726a; }
+  code { font-family: ui-monospace, monospace; color: #9fb6d1; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid #3a404d; }
+  .ok { color: #66c48a; border-color: #2f5f45; }
+  .revoked { color: #e2726a; border-color: #6f3330; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Non-Repudiation control plane</h1>
+  <div class="sub">Attributable agent actions: identity broker and revocation proxy</div>
+</header>
+<main>
+  <aside>
+    <h2>Agents</h2>
+    <div id="agents"></div>
+  </aside>
+  <section>
+    <h2>Evidence ledger <span id="count" class="pill"></span></h2>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Decision</th><th>Agent</th><th>Principal</th><th>Task</th><th>Action</th><th>Scope</th><th>Redactions</th><th>Hash</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const BROKER = "http://127.0.0.1:8081";
+const PROXY = "";
+
+async function loadAgents() {
+  const res = await fetch(BROKER + "/agents");
+  const agents = await res.json();
+  document.getElementById("agents").innerHTML = agents.map(a => `
+    <div class="agent">
+      <div class="id">${a.agent_id} <span class="pill ${a.status === 'active' ? 'ok' : 'revoked'}">${a.status}</span></div>
+      <div class="meta">v${a.agent_version}<br>owner ${a.owner}<br>max scopes: ${a.max_scopes.join(", ")}</div>
+      <button onclick="revoke('${a.agent_id}')">Revoke now</button>
+      <button class="reinstate" onclick="reinstate('${a.agent_id}')">Reinstate</button>
+    </div>`).join("");
+}
+
+async function revoke(id) {
+  await fetch(BROKER + "/revoke", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({agent_id: id, reason: "revoked from dashboard"})
+  });
+  loadAgents();
+}
+
+async function reinstate(id) {
+  await fetch(BROKER + "/reinstate", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({agent_id: id, reason: "reinstated from dashboard"})
+  });
+  loadAgents();
+}
+
+async function loadLedger() {
+  const res = await fetch(PROXY + "/v1/ledger?limit=60");
+  const data = await res.json();
+  document.getElementById("count").textContent = data.entries.length + " entries";
+  document.getElementById("rows").innerHTML = data.entries.map(e => `
+    <tr>
+      <td>${e.seq}</td>
+      <td class="${e.decision === 'ALLOW' ? 'allow' : 'deny'}">${e.decision}</td>
+      <td>${e.agent_id || "-"}<br><span class="meta">${e.agent_version || ""}</span></td>
+      <td>${e.principal || "-"}</td>
+      <td>${e.task_id || "-"}</td>
+      <td><code>${e.method} ${e.path}</code></td>
+      <td>${e.required_scope || "-"}</td>
+      <td>${e.redactions || "-"}</td>
+      <td><code>${(e.entry_hash || "").slice(0, 10)}</code></td>
+    </tr>`).join("");
+}
+
+function tick() { loadAgents(); loadLedger(); }
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>
