@@ -129,6 +129,33 @@ someone deploying this knows exactly what they are betting on.
 
 ## Residual risk we accept, and why
 
+**Ledger appends are not safe under concurrent writers.** `Ledger.append()` reads
+the chain head on one connection and inserts on another, with no transaction
+spanning the two and no lock. Two concurrent appends both read the same head,
+both claim the same sequence number, and one loses. Reproduced directly against
+the store: 120 appends across 16 threads produced 1 row, 118 `database is locked`
+errors and one `UNIQUE constraint failed: entries.seq`.
+
+It does not happen in the running system, and the reason is an accident rather
+than a decision. The gateway handler is `async def` but makes a blocking HTTP
+call inside it, which holds the event loop, so uvicorn with one worker serialises
+every request. Verified: 60 concurrent calls through the proxy produce 60
+entries, contiguous sequence numbers, chain intact.
+
+The consequence if that ever stops being true is the worst one available. The
+ledger write happens *after* the upstream call, so a failed append means the
+action was performed and there is no record of it. Adding `--workers 2`, or
+moving to async HTTP to reduce the measured per-call overhead, would remove the
+accidental serialisation silently.
+
+We attempted the fix (WAL, a write lock, and `BEGIN IMMEDIATE` spanning the head
+read and the insert) and reverted it, because it introduced a worse problem: per
+call latency went from 37 ms to over 20 seconds under the same load, and the
+two stores sharing one database file contended with each other. Shipping a
+performance collapse to fix a bug that cannot currently occur was the wrong
+trade with a demo pending. The correct fix is one writer owning the file, or
+Postgres, and it is not a change to make in a hurry.
+
 **Bootstrap secrets instead of attestation.** An agent authenticates to the
 broker with a shared secret. Anyone who reads that secret can impersonate the
 agent. Real workload attestation (SPIFFE, SPIRE, cloud instance identity) is

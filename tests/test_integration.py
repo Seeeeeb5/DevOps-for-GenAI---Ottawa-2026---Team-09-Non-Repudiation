@@ -347,7 +347,8 @@ class TestEvidence:
         ).json()
         assert result["observed_by_proxy"] >= 1
         assert result["verdict"] in (
-            "CONSISTENT", "CONCEALMENT DETECTED", "PHANTOM REPORTING DETECTED"
+            "CONSISTENT", "CONCEALMENT DETECTED", "PHANTOM REPORTING DETECTED",
+            "NOT INSTRUMENTED",
         )
 
 

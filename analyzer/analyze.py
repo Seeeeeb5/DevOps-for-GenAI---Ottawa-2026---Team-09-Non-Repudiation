@@ -1082,7 +1082,8 @@ def observed_count(jti: str):
         return None
 
 
-def watch(interval: float = 3.0, use_model: bool = False, active: int = 5) -> int:
+def watch(interval: float = 3.0, use_model: bool = False, active: int = 5,
+          max_per_pass: int = 6, pace: float = 0.15) -> int:
     """Analyse tokens as they appear, and refresh them while they are still busy.
 
     A finding that has to be fetched by hand has the same problem as a report
@@ -1139,7 +1140,16 @@ def watch(interval: float = 3.0, use_model: bool = False, active: int = 5) -> in
 
             # Oldest first, so a burst of new tokens is reported in the order
             # they happened rather than backwards.
+            # Work per pass is capped and paced. The attack suite creates two
+            # dozen tokens in a few seconds, and analysing all of them at once
+            # put enough load on a single worker proxy to make other demo
+            # segments time out. Falling a few seconds behind is invisible;
+            # starving the thing being demonstrated is not.
+            budget = max_per_pass
+
             for jti in reversed(tokens):
+                if budget <= 0:
+                    break
                 if jti in counts:
                     continue
                 if already_analysed(jti):
@@ -1152,11 +1162,15 @@ def watch(interval: float = 3.0, use_model: bool = False, active: int = 5) -> in
                 counts[jti] = document["summary"].get("actions_observed")
                 signatures[jti] = signature(document)
                 report(jti, document, "new    ")
+                budget -= 1
+                time.sleep(pace)
 
             # Refresh the newest few if they have done more since last time. The
             # published analysis is always brought up to date; only a change in
             # what it says is worth printing.
             for jti in tokens[:active]:
+                if budget <= 0:
+                    break
                 current = observed_count(jti)
                 if current is None or current == counts.get(jti):
                     continue
@@ -1169,6 +1183,8 @@ def watch(interval: float = 3.0, use_model: bool = False, active: int = 5) -> in
                 if new_signature != signatures.get(jti):
                     signatures[jti] = new_signature
                     report(jti, document, "changed")
+                budget -= 1
+                time.sleep(pace)
 
             time.sleep(interval)
     except KeyboardInterrupt:
