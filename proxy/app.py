@@ -381,6 +381,61 @@ def list_tokens():
     return {"tokens": seen}
 
 
+@app.get("/v1/agents")
+def list_agents():
+    """The agent registry, fetched from the broker on the dashboard's behalf.
+
+    The dashboard used to call the broker directly on port 8081. That works on
+    one machine and fails everywhere else: over an SSH tunnel it needs a second
+    forwarded port, and the agent list silently stays empty when only the
+    dashboard's own port is reachable.
+
+    It is also the wrong shape. The broker is a control plane service and a
+    browser should not need a route to it. Serving this from the same origin as
+    the page means the dashboard has exactly one dependency, which is the
+    process that served it.
+    """
+    try:
+        response = requests.get(BROKER_URL + "/agents", timeout=5,
+                                proxies=NO_PROXY_ENV)
+        response.raise_for_status()
+        return {"agents": response.json(), "broker": "reachable"}
+    except requests.RequestException as exc:
+        # Say so rather than returning an empty list. An empty registry and an
+        # unreachable broker look identical on screen and mean opposite things.
+        return JSONResponse(
+            {"agents": [], "broker": "unreachable", "detail": str(exc)},
+            status_code=503,
+        )
+
+
+@app.post("/v1/agents/{agent_id}/{action}")
+def set_agent_state(agent_id: str, action: str):
+    """Revoke or reinstate one agent, forwarded to the broker.
+
+    Note for anyone hardening this: the kill switch is now reachable on the
+    dashboard's port as well as the broker's, and neither is authenticated. That
+    was already true of the broker, so this widens nothing that was closed, but
+    it does make the case for putting authentication in front of the control
+    plane harder to defer. Who may stop an agent is itself a privileged
+    decision.
+    """
+    if action not in ("revoke", "reinstate"):
+        return JSONResponse({"error": "action must be revoke or reinstate"},
+                            status_code=400)
+    try:
+        response = requests.post(
+            "{}/{}".format(BROKER_URL, action),
+            json={"agent_id": agent_id, "reason": "from control plane"},
+            timeout=5, proxies=NO_PROXY_ENV,
+        )
+        return JSONResponse(_safe_json(response.text),
+                            status_code=response.status_code)
+    except requests.RequestException as exc:
+        return JSONResponse({"error": "broker unreachable", "detail": str(exc)},
+                            status_code=503)
+
+
 @app.get("/")
 def dashboard():
     path = os.path.join(

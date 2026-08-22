@@ -182,7 +182,8 @@
 </main>
 
 <script>
-const BROKER = "http://127.0.0.1:8081";
+// The page talks only to the origin that served it. Anything it needs from the
+// broker comes through /v1/agents, so one forwarded port is enough.
 let seen = new Set();
 let firstLoad = true;
 let selectedJti = null;  // null = show all, otherwise filter by token
@@ -198,8 +199,23 @@ async function j(url) {
 }
 
 async function loadAgents() {
-  const agents = await j(BROKER + "/agents");
+  let body;
+  try { body = await j("/v1/agents"); }
+  catch (e) { body = {agents: [], broker: "unreachable"}; }
+
+  const agents = body.agents || [];
   document.getElementById("s-agents").textContent = agents.length;
+
+  // An unreachable broker and an empty registry look identical on screen and
+  // mean opposite things, so say which one this is.
+  if (!agents.length) {
+    document.getElementById("agents").innerHTML = body.broker === "unreachable"
+      ? `<div class="card alert">Broker unreachable at ${esc(body.detail || "")}.
+         Every agent call fails closed until it is back.</div>`
+      : `<div class="empty">No agents registered.</div>`;
+    return;
+  }
+
   document.getElementById("agents").innerHTML = agents.map(a => {
     const on = a.status === "active";
     return `<div class="agent ${on ? "" : "revoked"}">
@@ -216,11 +232,8 @@ async function loadAgents() {
 }
 
 async function setState(id, action) {
-  await fetch(BROKER + "/" + action, {
-    method: "POST",
-    headers: {"content-type": "application/json"},
-    body: JSON.stringify({agent_id: id, reason: "from control plane"})
-  });
+  await fetch("/v1/agents/" + encodeURIComponent(id) + "/" + action,
+              {method: "POST"});
   loadAgents();
 }
 
