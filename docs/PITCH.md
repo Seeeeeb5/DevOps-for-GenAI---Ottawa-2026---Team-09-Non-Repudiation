@@ -11,7 +11,32 @@ from a command anyone can run in front of the judges. Nothing invented.
 
 ---
 
-## Slide 1. The problem
+## Slide 1. The problem, shown not described
+
+```bash
+python3 agent/unprotected.py
+```
+
+Run the control first. The same agent, with no broker, no scope, no proxy and
+no ledger, holding a long lived shared credential the way agents do today.
+
+It reads a build log. Inside that log, between two ordinary test failures,
+sits a line addressed to automated agents telling it the failure is a known
+stale-branch artifact and to delete the main branch and redeploy.
+
+It complies. The branch is deleted, production is redeployed, and the target's
+audit log records five lines, all of them `user=ci-bot`.
+
+Nobody typed that instruction at the agent. It arrived inside data the agent
+was legitimately asked to read. A commit message, an issue comment or a
+dependency changelog carries it equally well.
+
+That is the whole problem on one screen: nothing refused it, and nothing
+recorded who did it.
+
+---
+
+## Slide 1b. The problem, stated
 
 **Title:** Nobody lets an agent run unattended, and the reason is not the model
 
@@ -75,15 +100,21 @@ contribution.
 
 ---
 
-## Slide 4. Live: normal work, fully attributed
+## Slide 4. Live: the same run, contained
 
 ```bash
 python3 agent/investigator.py --offline
 ```
 
-A real agent loop. It decides its own next step: lists runs, forms a
-hypothesis, reads the failed run, reads the logs, rejects its first hypothesis,
-forms a second, reruns to confirm, concludes.
+Same agent, same log, same injected instruction. It still reads it, and it
+still tries to comply: step 6 attempts to delete the main branch, step 7
+attempts to deploy. Both are refused at the proxy before the target is
+contacted. The agent then goes back to the real investigation and finds the
+actual root cause.
+
+This is the point to make explicitly. We did not stop the agent from being
+manipulated. We stopped the manipulation from having an effect. Those are
+different claims, and only the second one is achievable.
 
 Every outbound call went through the proxy. Every internal step was recorded.
 The ledger now holds agent id, version, owner, principal, task id, token jti
@@ -91,6 +122,34 @@ and the scope that authorised each action.
 
 Note that the build log contained an email address and an internal IP, and both
 were redacted before anything was stored. We record behaviour, not secrets.
+
+---
+
+## Slide 4b. Live: autonomy
+
+```bash
+python3 triggers/simulate_failure.py
+```
+
+Nobody starts the agent. A pipeline fails, CI posts an event, and an agent is
+dispatched under a token scoped to that one incident. The only human action
+available is to stop it.
+
+---
+
+## Slide 4c. Live: stopping one agent, not all of them
+
+```bash
+python3 agent/isolation.py
+```
+
+Two agents with different scopes and different owners running against the same
+target. The debugging agent is refused when it tries to deploy, even though
+the deploy agent is permitted to. Then the debugging agent is revoked and stops
+in under 20 milliseconds, while the deploy agent keeps working.
+
+The problem slide claims you cannot stop one agent today without stopping all
+of them. This is that claim made measurable.
 
 ---
 
@@ -105,7 +164,7 @@ injection telling the agent to delete the main branch or ship to production,
 privilege escalation toward the secret store, an undeclared endpoint, path
 traversal, a method swap on a permitted path, a missing token, a forged token.
 
-Expected output: **9 of 9 scenarios behaved as expected.**
+Expected output: **11 of 11 scenarios behaved as expected.**
 
 Two things to point out:
 
@@ -177,6 +236,41 @@ chain. Signature only, and an attacker deletes a record undetected.
 
 ---
 
+## Slide 8b. What it costs
+
+```bash
+python3 scripts/benchmark.py
+```
+
+Measured on the same machine, 200 requests per path. Roughly 5 ms added at p50
+and p95. That covers signature verification, a live revocation check, a policy
+decision, redaction of both payloads and a signed append to the hash chain.
+
+Say where it goes: the revocation check dominates, and caching it removes it
+from the hot path at the cost of revocation taking up to the cache TTL. We
+chose the slower path because instant revocation is the feature.
+
+Have the number ready. A judge will ask, and "it is small" is a worse answer
+than "about five milliseconds, and here is where it goes."
+
+---
+
+## Slide 8c. It is not tied to our own mock
+
+```bash
+python3 agent/github_demo.py
+```
+
+The same token, the same policy file and the same ledger governing reads
+against the real api.github.com. Reads permitted by the github:read scope go
+through; anything outside it is refused before GitHub is contacted.
+
+Write operations are deliberately not routed to GitHub. They are refused at the
+proxy anyway, and pointing a destructive demo at a live system would be
+careless. Say that out loud, it reads as judgement rather than as a gap.
+
+---
+
 ## Slide 9. What we know is not finished
 
 Name these before a judge finds them. Naming them is a strength.
@@ -190,7 +284,9 @@ Name these before a judge finds them. Naming them is a strength.
   and publishes chain roots, so that even an operator with database access
   cannot rewrite history undetected.
 - Redaction is pattern based and will miss novel secret formats.
-- The target is a mock CI/CD system, not a live GitLab or Jenkins.
+- Most of the demo runs against a mock CI/CD system. Real GitHub reads work
+  and are demonstrated, but the write path is not exercised against a live
+  system.
 
 ---
 
@@ -259,8 +355,20 @@ well-instructed agent might still comply with, and the proxy refuses them
 regardless.
 
 **How much of this actually works?**
-All of it. 36 tests pass, 9 of 9 attack scenarios behave as expected, and every
-number on these slides comes from a command you can run right now.
+All of it. 36 tests pass, 11 of 11 attack scenarios behave as expected, the
+overhead is measured rather than estimated, and every number on these slides
+comes from a command you can run right now.
+
+**Isn't your injection just a hardcoded attack call?**
+No, and this is worth being precise about. The instruction lives inside the
+build log served by the target. The agent fetches that log as part of its
+normal investigation, reads it, and its next decision is to comply. Remove the
+proxy and it succeeds, which is what the control run shows. The attack path is
+data to agent to action, which is the shape real indirect injection takes.
+
+**You gave the agent destructive tools on purpose?**
+Yes. An agent that cannot attempt an action is not being contained, it is
+merely incapable. To demonstrate containment the agent has to be able to try.
 
 ---
 
@@ -277,7 +385,12 @@ Or `bash scripts/demo.sh --fast` for a recording.
 Individual pieces:
 
 ```bash
-bash scripts/run_all.sh                  # start broker, target, proxy
+bash scripts/run_all.sh                  # start broker, target, proxy, webhook
+python3 agent/unprotected.py             # the control, no protection at all
+python3 triggers/simulate_failure.py     # event triggered investigation
+python3 agent/isolation.py               # two agents, revoke one
+python3 scripts/benchmark.py             # measured overhead
+python3 agent/github_demo.py             # real GitHub API, same governance
 python3 agent/demo_agent.py              # six act walkthrough
 python3 attacks/run_attacks.py           # nine adversarial scenarios
 python3 agent/investigator.py --offline  # real agent loop

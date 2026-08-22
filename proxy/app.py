@@ -215,17 +215,37 @@ async def gateway(path: str, request: Request):
         )
 
     # Step 4. Forward using the proxy credential. The agent never holds it.
-    upstream = requests.request(
-        method,
-        TARGET_URL + target_path,
-        data=raw_body.encode() if raw_body else None,
-        headers={
-            "content-type": request.headers.get("content-type", "application/json"),
-            "x-target-credential": os.environ.get("TARGET_CREDENTIAL", "proxy-held-secret"),
-        },
-        timeout=15,
-        proxies=NO_PROXY_ENV,
-    )
+    #
+    # Paths under /gh/ route to the real GitHub API. This exists to show that
+    # nothing about the design depends on the target being a mock: the same
+    # token, the same policy file and the same ledger govern a real third
+    # party API. Only read operations are routed this way. Destructive
+    # operations stay on the mock, because they are refused at the proxy
+    # anyway and there is no reason to point them at a live system.
+    if target_path.startswith("/gh/"):
+        upstream_url = "https://api.github.com" + target_path[3:]
+        upstream_headers = {
+            "accept": "application/vnd.github+json",
+            "user-agent": "non-repudiation-proxy",
+        }
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if github_token:
+            upstream_headers["authorization"] = "Bearer " + github_token
+        upstream = requests.request(
+            method, upstream_url, headers=upstream_headers, timeout=20
+        )
+    else:
+        upstream = requests.request(
+            method,
+            TARGET_URL + target_path,
+            data=raw_body.encode() if raw_body else None,
+            headers={
+                "content-type": request.headers.get("content-type", "application/json"),
+                "x-target-credential": os.environ.get("TARGET_CREDENTIAL", "proxy-held-secret"),
+            },
+            timeout=15,
+            proxies=NO_PROXY_ENV,
+        )
 
     entry = record("ALLOW", reason, claims, method, target_path, required_scope,
                    risk, upstream.status_code, raw_body, upstream.text)

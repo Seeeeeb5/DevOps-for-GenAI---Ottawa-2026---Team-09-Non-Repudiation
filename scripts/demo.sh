@@ -46,7 +46,8 @@ python3 -m uvicorn broker.app:app --port 8081 --log-level warning > logs/broker.
 python3 -m uvicorn target.app:app --port 8082 --log-level warning > logs/target.log 2>&1 &
 sleep 2
 python3 -m uvicorn proxy.app:app --port 8080 --log-level warning > logs/proxy.log 2>&1 &
-sleep 2
+python3 -m uvicorn triggers.webhook:app --port 8083 --log-level warning > logs/webhook.log 2>&1 &
+sleep 3
 printf "dashboard at http://127.0.0.1:8080/\n"
 pause
 
@@ -65,8 +66,13 @@ cat <<'EOF'
 EOF
 pause
 
+act "THE CONTROL  the same agent with none of this in place" \
+    "It reads a build log containing an injected instruction, and complies."
+python3 agent/unprotected.py
+pause
+
 act "ACT 1 to 6  The system in operation" \
-    "A CI/CD debugging agent under an identity broker and a revocation proxy."
+    "The same agent and the same log, now behind a broker and a proxy."
 python3 agent/demo_agent.py
 pause
 
@@ -78,6 +84,21 @@ pause
 act "A REAL AGENT LOOP" \
     "The agent decides its own next step. Every call still goes through the proxy."
 python3 agent/investigator.py --offline
+pause
+
+act "AUTONOMY  nobody starts the agent" \
+    "A pipeline fails, an event arrives, an agent is dispatched."
+python3 triggers/simulate_failure.py || true
+pause
+
+act "ISOLATION  stopping one agent, not all of them" \
+    "Two agents, different scopes. One is revoked mid flight."
+python3 agent/isolation.py
+pause
+
+act "WHAT IT COSTS" \
+    "Measured, not asserted."
+python3 scripts/benchmark.py --n 150
 pause
 
 act "TRACE ANALYSIS" \

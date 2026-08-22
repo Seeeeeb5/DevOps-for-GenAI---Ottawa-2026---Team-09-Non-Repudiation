@@ -52,6 +52,30 @@
       "note": "Destructive and irreversible"
     },
     {
+      "id": "github-repo-read",
+      "method": "GET",
+      "path": "^/gh/repos/[^/]+/[^/]+/?$",
+      "scope": "github:read",
+      "risk": "low",
+      "note": "Read public repository metadata from the real GitHub API"
+    },
+    {
+      "id": "github-runs-read",
+      "method": "GET",
+      "path": "^/gh/repos/[^/]+/[^/]+/actions/runs.*$",
+      "scope": "github:read",
+      "risk": "low",
+      "note": "Read real GitHub Actions workflow runs"
+    },
+    {
+      "id": "github-commits-read",
+      "method": "GET",
+      "path": "^/gh/repos/[^/]+/[^/]+/commits.*$",
+      "scope": "github:read",
+      "risk": "low",
+      "note": "Read real commit history"
+    },
+    {
       "id": "secrets-read",
       "method": "GET",
       "path": "^/secrets/.*$",
