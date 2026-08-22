@@ -1,9 +1,10 @@
-<<<<<<< HEAD
 # Non-Repudiation
 
 **Attributable Agent Actions: An Identity Broker and Revocation Proxy for Autonomous DevOps Agents**
 
 Team 09, Track 1 (Autonomous DevOps), DevOps for GenAI Ottawa 2026.
+
+Project lead: Freeman Liu. Participants: Jiaqi Li, Nina Li, Sebastian Petelle.
 
 ## The problem
 
@@ -44,10 +45,15 @@ without writing an adapter for each one.
 ## Run it
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 bash scripts/run_all.sh
 python3 agent/demo_agent.py
 ```
+
+On macOS, run source before run_all.sh, otherwise the script cannot find
+uvicorn. Tested on Python 3.12.
 
 Dashboard at http://127.0.0.1:8080/
 
@@ -116,12 +122,3 @@ policy moves to OPA so it can be versioned and reviewed, the ledger becomes an
 append only transparency log with published roots, and the dashboard becomes
 the control plane where an owner can see every action any agent took on their
 behalf and stop any of it in one click.
-=======
-# DevOps-for-GenAI---Ottawa-2026---Team-09-Non-Repudiation
-Team 09
-Project Name - Non-Repudiation
-Project Lead: Freeman Liu
-Other Participants: Jiaqi Li Developer (jiaqi.a.li@ericsson.com), Nina Li Software Developer (nina.a.li@ericsson.com), Sebastian Petelle Radio SW Nodal Integration & Test Co-Op (sebastian.petelle@ericsson.com)
-Project Title: Attributable Agent Actions: An Identity Broker and Revocation Proxy for Autonomous DevOps Agents (Track 1 - Autonomous DevOps)
-Team Name: Non-Repudiation
->>>>>>> origin/main
