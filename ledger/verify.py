@@ -5,8 +5,19 @@ checks that each entry points at the previous one, and verifies the Ed25519
 signature on each entry. It reports the first position where verification
 fails, which is what the tamper detection part of the demo relies on.
 
+Verification needs only the public key. It used to load the private key and
+derive the public half from it, which meant the only people who could check the
+record were the people able to forge it. That is the opposite of the property
+this project is named after. A private key is still accepted, because the demo
+has one on disk, but it is no longer required.
+
 Usage:
     python3 ledger/verify.py --db data/ledger.db --key data/ledger_key.pem
+    python3 ledger/verify.py --db data/ledger.db --public-key ledger_public.pem
+
+For a genuinely independent check, use audit.py against an exported bundle. It
+imports nothing from this project and needs no key file at all, because the
+bundle carries its own public key.
 """
 
 import argparse
@@ -22,10 +33,25 @@ from common import canonical_json, sha256_hex  # noqa: E402
 from ledger.store import GENESIS_HASH, SIGNED_FIELDS  # noqa: E402
 
 
-def verify(db_path, key_path):
+def load_public_key(key_path=None, public_key_path=None):
+    """Return a public key for verification, preferring a public key file."""
+    if public_key_path:
+        with open(public_key_path, "rb") as handle:
+            return serialization.load_pem_public_key(handle.read())
+
     with open(key_path, "rb") as handle:
-        private_key = serialization.load_pem_private_key(handle.read(), password=None)
-    public_key = private_key.public_key()
+        material = handle.read()
+
+    # A public key is all verification needs. Fall back to a private key only
+    # because the prototype keeps one next to the database.
+    try:
+        return serialization.load_pem_public_key(material)
+    except ValueError:
+        return serialization.load_pem_private_key(material, password=None).public_key()
+
+
+def verify(db_path, key_path=None, public_key_path=None):
+    public_key = load_public_key(key_path, public_key_path)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -71,9 +97,14 @@ def verify(db_path, key_path):
 def main():
     parser = argparse.ArgumentParser(description="Verify the evidence ledger.")
     parser.add_argument("--db", default="data/ledger.db")
-    parser.add_argument("--key", default="data/ledger_key.pem")
+    parser.add_argument("--key", default="data/ledger_key.pem",
+                        help="public or private key PEM; only the public half "
+                             "is used")
+    parser.add_argument("--public-key", default=None,
+                        help="public key PEM, for verifying without any access "
+                             "to signing material")
     args = parser.parse_args()
-    sys.exit(verify(args.db, args.key))
+    sys.exit(verify(args.db, args.key, args.public_key))
 
 
 if __name__ == "__main__":

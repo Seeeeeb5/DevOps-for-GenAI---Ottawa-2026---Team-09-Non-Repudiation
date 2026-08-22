@@ -18,6 +18,7 @@ proxy, because the proxy holds the only credentials that the target accepts.
 
 import json
 import os
+import sqlite3
 import sys
 
 import jwt
@@ -138,14 +139,43 @@ def check_and_contain(claims):
     return CONTAINED[jti]
 
 
-def broker_public_key():
-    """Fetch and cache the broker token verification key."""
+def broker_public_key(force=False):
+    """Fetch and cache the broker token verification key.
+
+    The cache has to be droppable. The broker generates its signing key in
+    memory at startup, so restarting it produces a new key, and a proxy holding
+    the old one rejected every token from that point on, including freshly
+    issued valid ones. The symptom was "invalid token", which sends whoever is
+    debugging to the agent or the broker rather than to a stale cache in a third
+    process. Verified before this change: restart the broker, request a brand new
+    token, get 401.
+
+    The same mechanism is what makes ordinary key rotation survivable.
+    """
     global _broker_public_key
-    if _broker_public_key is None:
+    if force or _broker_public_key is None:
         response = requests.get(BROKER_URL + "/public-key", timeout=5, proxies=NO_PROXY_ENV)
         response.raise_for_status()
         _broker_public_key = response.json()["public_key_pem"]
     return _broker_public_key
+
+
+def decode_token(token):
+    """Verify a token, refreshing the broker key once if verification fails.
+
+    A signature that does not verify has two causes that look identical: a forged
+    token, or a key we should no longer be trusting. Retrying once with a fresh
+    key distinguishes them, and a forged token still fails the second time.
+    """
+    try:
+        return jwt.decode(token, broker_public_key(), algorithms=["ES256"],
+                          issuer="non-repudiation-broker")
+    except jwt.ExpiredSignatureError:
+        # Expiry is not a key problem. Refetching would prove nothing.
+        raise
+    except jwt.InvalidTokenError:
+        return jwt.decode(token, broker_public_key(force=True), algorithms=["ES256"],
+                          issuer="non-repudiation-broker")
 
 
 def record(decision, reason, claims, method, path, required_scope, risk,
@@ -203,9 +233,21 @@ async def report(request: Request):
     This endpoint is intentionally unauthenticated and intentionally trusting,
     because nothing here is treated as evidence. It is narrative that gets
     checked against the ledger, not a substitute for it.
+
+    It also cannot be allowed to fail loudly. Telemetry is the weaker of the two
+    streams by design, so losing one event is a gap in the narrative, not a loss
+    of evidence. Returning a 500 here would let an unstorable event break the
+    agent that reported it.
     """
-    event = await request.json()
-    telemetry.record(event)
+    try:
+        event = await request.json()
+    except ValueError:
+        return JSONResponse({"accepted": False, "reason": "not json"},
+                            status_code=400)
+    try:
+        telemetry.record(event)
+    except sqlite3.Error as exc:
+        return {"accepted": False, "reason": "telemetry store busy: {}".format(exc)}
     return {"accepted": True}
 
 
@@ -463,12 +505,7 @@ async def gateway(path: str, request: Request):
 
     # Step 1. Validate the token signature and expiry.
     try:
-        claims = jwt.decode(
-            token,
-            broker_public_key(),
-            algorithms=["ES256"],
-            issuer="non-repudiation-broker",
-        )
+        claims = decode_token(token)
     except jwt.ExpiredSignatureError:
         record("DENY", "token expired", {}, method, target_path, None, None,
                401, raw_body, "")

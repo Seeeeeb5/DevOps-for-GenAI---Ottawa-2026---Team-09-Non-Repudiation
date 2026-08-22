@@ -303,14 +303,22 @@ async function loadRecon() {
   selectedJti = jti;
   loadLedger();  // Re-render ledger filtered to this token
   const r = await j("/v1/reconcile/" + jti);
+  // Three states, not two. An agent that reported nothing was never
+  // instrumented, which is a gap rather than an alarm, and colouring it the
+  // same as concealment cries wolf on every uninstrumented token.
   const ok = r.verdict === "CONSISTENT";
+  const quiet = r.verdict === "NOT INSTRUMENTED";
+  const colour = ok ? "var(--green)" : quiet ? "var(--faint)" : "var(--amber)";
   document.getElementById("recon").innerHTML = `
-    <div class="card ${ok ? "good" : "alert"}">
-      <div class="verdict" style="color:${ok ? "var(--green)" : "var(--amber)"}">${esc(r.verdict)}</div>
+    <div class="card ${ok ? "good" : quiet ? "" : "alert"}">
+      <div class="verdict" style="color:${colour}">${esc(r.verdict)}</div>
+      ${quiet ? `<div class="kv" style="display:block;color:var(--faint);line-height:1.45">
+        This agent carries no flight recorder, so there is nothing to reconcile.
+        The proxy still recorded everything it did.</div>` : ""}
       <div class="kv"><span>observed by proxy</span><b>${r.observed_by_proxy}</b></div>
       <div class="kv"><span>reported by agent</span><b>${r.reported_by_agent}</b></div>
       <div class="kv"><span>internal events</span><b>${r.internal_events}</b></div>
-      ${r.concealed.length ? `<div style="margin-top:7px;color:var(--red);font-size:11px">
+      ${r.concealed.length && !quiet ? `<div style="margin-top:7px;color:var(--red);font-size:11px">
         concealed<br>${r.concealed.map(c => `<code>${esc(c)}</code>`).join("<br>")}</div>` : ""}
       ${r.phantom.length ? `<div style="margin-top:7px;color:var(--red);font-size:11px">
         phantom<br>${r.phantom.map(c => `<code>${esc(c)}</code>`).join("<br>")}</div>` : ""}

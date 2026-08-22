@@ -125,15 +125,24 @@ pause
 act "AUDIT  someone edits the record" \
     "Rewrite a denied action to look like it was allowed."
 python3 - <<'PYEOF'
+import json
 import sqlite3
+
 conn = sqlite3.connect('data/ledger.db')
 row = conn.execute(
-    "SELECT seq, method, path FROM entries WHERE decision='DENY' ORDER BY seq LIMIT 1"
+    "SELECT seq, method, path, decision, reason FROM entries "
+    "WHERE decision='DENY' ORDER BY seq LIMIT 1"
 ).fetchone()
 if row is None:
     print("no denied entry to tamper with")
 else:
-    seq, method, path = row
+    seq, method, path, decision, reason = row
+    # Keep the original so the chain can be put back. Demonstrating detection
+    # should not leave the ledger permanently broken: every audit run after this
+    # act would report ALTERED, so showing the auditor a second time would look
+    # like a failure rather than a demonstration.
+    with open('data/tamper_restore.json', 'w') as handle:
+        json.dump({"seq": seq, "decision": decision, "reason": reason}, handle)
     conn.execute(
         "UPDATE entries SET decision='ALLOW', reason='approved' WHERE seq=?", (seq,)
     )
@@ -147,6 +156,26 @@ printf "${DIM}The same edit, made to the bundle a third party is holding:${RESET
 python3 scripts/tamper_bundle.py evidence-bundle.json
 echo
 python3 audit.py evidence-bundle.json || true
+echo
+printf "${DIM}Putting the record back, so the chain is intact for anyone who\nwants to check it again:${RESET}\n\n"
+python3 - <<'PYEOF'
+import json
+import os
+import sqlite3
+
+if not os.path.exists('data/tamper_restore.json'):
+    print("nothing to restore")
+else:
+    with open('data/tamper_restore.json') as handle:
+        saved = json.load(handle)
+    conn = sqlite3.connect('data/ledger.db')
+    conn.execute("UPDATE entries SET decision=?, reason=? WHERE seq=?",
+                 (saved["decision"], saved["reason"], saved["seq"]))
+    conn.commit()
+    os.remove('data/tamper_restore.json')
+    print("entry {} restored to {}".format(saved["seq"], saved["decision"]))
+PYEOF
+python3 ledger/verify.py --db data/ledger.db --key data/ledger_key.pem
 pause
 
 act "WHAT THIS GIVES YOU" ""
