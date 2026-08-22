@@ -48,6 +48,7 @@ import datetime
 import json
 import os
 import sys
+import time
 
 import requests
 
@@ -1030,6 +1031,82 @@ def print_triage(documents: list) -> None:
         print_report(worst)
 
 
+def already_analysed(jti: str) -> bool:
+    """True when the proxy already holds an analysis for this token."""
+    try:
+        return bool(requests.get(PROXY_URL + "/v1/analysis", params={"jti": jti},
+                                 timeout=10,
+                                 proxies=NO_PROXY_ENV).json().get("available"))
+    except (requests.RequestException, ValueError):
+        return False
+
+
+def backfill(limit: int = 200, use_model: bool = False) -> int:
+    """Analyse every recent token that does not have an analysis yet.
+
+    The dashboard panel is empty for any token nobody has analysed, which for a
+    demo means most of them. This fills the gap in one pass.
+    """
+    analysed = 0
+    for jti in recent_jtis(limit):
+        if already_analysed(jti):
+            continue
+        try:
+            analyze(jti, use_model=use_model, publish_result=True)
+            analysed += 1
+        except requests.RequestException:
+            continue
+    return analysed
+
+
+def watch(interval: float = 3.0, use_model: bool = False) -> int:
+    """Analyse tokens as they appear, until interrupted.
+
+    A finding that has to be fetched by hand has the same problem as a report
+    nobody reads until morning: it exists and it does not reach anyone. This is
+    the smallest version of delivery rather than collection. The real one runs on
+    token completion and pushes anything critical to whatever the team already
+    watches.
+    """
+    print("Watching {} for new tokens every {:.0f}s. Ctrl-C to stop.".format(
+        PROXY_URL, interval))
+    print("Analysing anything not already analysed, model disabled.\n")
+    seen = set()
+    try:
+        while True:
+            try:
+                tokens = recent_jtis(200)
+            except requests.RequestException:
+                print("  proxy unreachable, retrying")
+                time.sleep(interval)
+                continue
+
+            for jti in reversed(tokens):
+                if jti in seen or already_analysed(jti):
+                    seen.add(jti)
+                    continue
+                seen.add(jti)
+                try:
+                    document = analyze(jti, use_model=use_model,
+                                       publish_result=True)
+                except requests.RequestException:
+                    continue
+                summary = document["summary"]
+                findings = document.get("findings") or []
+                print("  [{:8s}] {}  {:24s} {}".format(
+                    summary.get("headline_severity") or "info",
+                    jti[:8],
+                    (summary.get("task_id") or "-")[:24],
+                    findings[0]["type"] if findings else "clean"))
+                for finding in findings:
+                    if finding["severity"] in ("critical", "high"):
+                        print("             {}".format(finding["detail"]))
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nStopped. {} token(s) analysed this session.".format(len(seen)))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Analyse one agent trace.")
     parser.add_argument("--jti", help="token id to analyse")
@@ -1039,6 +1116,13 @@ def main() -> int:
                         metavar="N",
                         help="rank the N most recent tokens by severity "
                              "(default 20) and expand the worst")
+    parser.add_argument("--backfill", nargs="?", type=int, const=200,
+                        metavar="N",
+                        help="analyse every one of the N most recent tokens "
+                             "that has no analysis yet, then exit")
+    parser.add_argument("--watch", nargs="?", type=float, const=3.0,
+                        metavar="SECONDS",
+                        help="keep running and analyse tokens as they appear")
     parser.add_argument("--no-model", action="store_true",
                         help="deterministic findings only, never call a model")
     parser.add_argument("--no-publish", action="store_true",
@@ -1046,6 +1130,19 @@ def main() -> int:
     parser.add_argument("--json", action="store_true",
                         help="print the analysis document instead of a report")
     args = parser.parse_args()
+
+    if args.watch:
+        return watch(args.watch, use_model=not args.no_model)
+
+    if args.backfill:
+        try:
+            count = backfill(args.backfill, use_model=not args.no_model)
+        except requests.RequestException as exc:
+            print("Cannot reach the proxy at {}: {}".format(PROXY_URL, exc))
+            return 2
+        print("Analysed {} token(s) that had no analysis.".format(count))
+        print("Reload the dashboard: every token in the dropdown now has one.")
+        return 0
 
     if args.triage:
         try:
