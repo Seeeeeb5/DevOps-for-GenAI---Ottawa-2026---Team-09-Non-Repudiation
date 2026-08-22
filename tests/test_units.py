@@ -203,6 +203,18 @@ class TestReconciliation:
         assert result["observed_by_proxy"] == 0
         assert result["verdict"] == "CONSISTENT"
 
+    def test_system_containment_entries_are_not_counted_as_concealment(self):
+        """The system's own action against an agent is not the agent's action."""
+        observed = [
+            self._ledger_entry("GET", "/runs"),
+            {"jti": "j1", "method": "SYSTEM", "path": "/containment",
+             "decision": "CONTAIN"},
+        ]
+        reported = [self._reported("GET", "/runs")]
+        result = reconcile(observed, reported, "j1")
+        assert result["verdict"] == "CONSISTENT"
+        assert result["observed_by_proxy"] == 1
+
     def test_internal_events_counted_separately(self):
         reported = [
             {"event_type": "model_call", "model": "m"},

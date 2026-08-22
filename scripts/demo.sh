@@ -101,6 +101,11 @@ act "WHAT IT COSTS" \
 python3 scripts/benchmark.py --n 150
 pause
 
+act "CLOSED LOOP  the agent lies and the system stops it" \
+    "Detection is not a control. This one acts."
+python3 agent/containment.py
+pause
+
 act "TRACE ANALYSIS" \
     "Findings computed in code first, a model only for what needs judgement."
 python3 analyzer/analyze.py --latest
@@ -109,6 +114,12 @@ pause
 act "AUDIT  the evidence chain is intact" \
     "Recompute every hash, check every link, verify every signature."
 python3 ledger/verify.py --db data/ledger.db --key data/ledger_key.pem
+pause
+
+act "AUDIT  do not take our word for it" \
+    "Export the evidence, verify it with a script that imports none of our code."
+curl -s --noproxy '*' http://127.0.0.1:8080/v1/export > evidence-bundle.json
+python3 audit.py evidence-bundle.json
 pause
 
 act "AUDIT  someone edits the record" \
@@ -131,6 +142,11 @@ else:
 PYEOF
 echo
 python3 ledger/verify.py --db data/ledger.db --key data/ledger_key.pem || true
+echo
+printf "${DIM}The same edit, made to the bundle a third party is holding:${RESET}\n\n"
+python3 scripts/tamper_bundle.py evidence-bundle.json
+echo
+python3 audit.py evidence-bundle.json || true
 pause
 
 act "WHAT THIS GIVES YOU" ""
@@ -140,6 +156,7 @@ cat <<'EOF'
   Verification    the agent's own story is checked against an independent record
   Control         one agent can be stopped in under a second, others unaffected
   Evidence        the record is signed and chained, and tampering is detectable
+  Independence    anyone can verify it without trusting or contacting us
 
   Services are still running. Dashboard at http://127.0.0.1:8080/
   Stop them with: pkill -f uvicorn

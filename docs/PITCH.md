@@ -271,6 +271,48 @@ careless. Say that out loud, it reads as judgement rather than as a gap.
 
 ---
 
+## Slide 8d. The agent lies, and the system stops it
+
+```bash
+python3 agent/containment.py
+```
+
+The strongest thirty seconds in the demo. An agent reports honestly for two
+calls, then keeps acting and stops reporting. The proxy compares the two
+streams after every call, sees two actions performed and never reported, and
+revokes the agent. Its next action fails. Nobody was asked.
+
+Say the distinction: detection produces a finding for someone to read in the
+morning, and the agent keeps working until then. This is a control, not an
+alert. Note also that the containment decision is itself a signed ledger entry,
+so the system's action against the agent is as auditable as the agent's actions
+were.
+
+---
+
+## Slide 8e. Do not take our word for it
+
+```bash
+curl http://127.0.0.1:8080/v1/export > evidence-bundle.json
+python3 audit.py evidence-bundle.json
+```
+
+Hand the judge the bundle. `audit.py` imports nothing from this project, makes
+no network calls, and is short enough to read before running. It checks that
+every entry hashes to its stored value, that every entry links to the one
+before it, and that every signature is valid.
+
+Then edit the bundle in front of them and run it again. It names the entry.
+
+This is the slide that earns the team name. Non-repudiation is not a property
+of a system that verifies itself. It is the property that a third party who
+trusts nobody can check the record independently. If you have to trust our code
+to believe our claims, the claims are worth very little.
+
+Offer the bundle and the script to the judges to take away.
+
+---
+
 ## Slide 9. What we know is not finished
 
 Name these before a judge finds them. Naming them is a strength.
@@ -287,6 +329,24 @@ Name these before a judge finds them. Naming them is a strength.
 - Most of the demo runs against a mock CI/CD system. Real GitHub reads work
   and are demonstrated, but the write path is not exercised against a live
   system.
+
+---
+
+## Slide 9b. Threat model
+
+Point at `docs/THREAT_MODEL.md` rather than reading it out. Say three things:
+
+- We protect the effects of an agent on the systems it can reach, and we make
+  the record of those effects independently verifiable.
+- We do not protect the agent's reasoning. We cannot stop an agent being
+  convinced by injected text; we stop the conviction having an effect.
+- The proxy is the trust anchor and we do not defend against it being
+  compromised. What the design does is move the anchor from a diffuse set of
+  agents holding credentials to one component that can be hardened and audited.
+
+The document names five adversaries, maps each to the control that addresses it
+and the command that demonstrates it, lists eight things we explicitly do not
+defend, and states the six assumptions the guarantees rest on.
 
 ---
 
@@ -355,7 +415,7 @@ well-instructed agent might still comply with, and the proxy refuses them
 regardless.
 
 **How much of this actually works?**
-All of it. 36 tests pass, 11 of 11 attack scenarios behave as expected, the
+All of it. 42 tests pass, 11 of 11 attack scenarios behave as expected, the
 overhead is measured rather than estimated, and every number on these slides
 comes from a command you can run right now.
 
@@ -369,6 +429,27 @@ data to agent to action, which is the shape real indirect injection takes.
 **You gave the agent destructive tools on purpose?**
 Yes. An agent that cannot attempt an action is not being contained, it is
 merely incapable. To demonstrate containment the agent has to be able to try.
+
+**What if the agent's telemetry is just broken rather than dishonest?**
+We treat them the same, and deliberately. From outside the agent, a broken
+reporter and a lying one are indistinguishable, and in both cases the agent's
+account of itself has stopped being reliable. There is no safe reason to keep
+extending trust while that is true. The containment is a revocation, not a
+punishment, and reinstating takes one click.
+
+**Isn't automatic revocation dangerous? What if it fires wrongly?**
+It is a real risk and it is why the threshold is configurable and why
+containment is per token rather than per agent, so a fresh grant is judged on
+its own behaviour. The failure mode is an agent stopping when it should not
+have, which is recoverable. The alternative failure mode is an agent whose
+telemetry no longer reflects reality continuing to act, which is not.
+
+**Your ledger signing key is in a file. Couldn't an insider rewrite everything
+and resign it?**
+Yes, and audit.py would report the chain as valid. That is a genuine limit and
+it is in the threat model. The production answer is a KMS or HSM plus periodic
+publication of chain roots to an external witness, so that a rewrite becomes
+visible even to someone holding the key.
 
 ---
 
@@ -391,6 +472,9 @@ python3 triggers/simulate_failure.py     # event triggered investigation
 python3 agent/isolation.py               # two agents, revoke one
 python3 scripts/benchmark.py             # measured overhead
 python3 agent/github_demo.py             # real GitHub API, same governance
+python3 agent/containment.py             # concealment triggers automatic revocation
+curl localhost:8080/v1/export > b.json   # export the evidence bundle
+python3 audit.py b.json                  # verify it with zero dependencies on us
 python3 agent/demo_agent.py              # six act walkthrough
 python3 attacks/run_attacks.py           # nine adversarial scenarios
 python3 agent/investigator.py --offline  # real agent loop

@@ -104,10 +104,14 @@ def reconcile(ledger_entries, reported_events, jti):
     telemetry is incomplete, which is exactly the failure mode that makes self
     reported observability untrustworthy on its own.
     """
+    # CONTAIN entries are the system's own action against the agent, not the
+    # agent's. Counting them as unreported would make the system's response
+    # look like more concealment by the agent.
     observed = [
         (e["method"], e["path"])
         for e in ledger_entries
         if e.get("jti") == jti and e.get("method")
+        and e.get("decision") != "CONTAIN"
     ]
     claimed = [
         (e["method"], e["path"])

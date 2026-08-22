@@ -150,6 +150,169 @@ class TestRevocation:
                       timeout=10, proxies=NO_PROXY_ENV)
 
 
+class TestAutomaticContainment:
+    def test_concealment_triggers_revocation_without_a_human(self):
+        """The closed loop: the agent under reports and the system stops it."""
+        import sys as _sys
+
+        _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from agent.sdk import FlightRecorder
+
+        requests.post(BROKER + "/reinstate", json={"agent_id": "ci-debug-agent"},
+                      timeout=10, proxies=NO_PROXY_ENV)
+        response = requests.post(
+            BROKER + "/token",
+            json={"agent_id": "ci-debug-agent",
+                  "bootstrap_secret": "bootstrap-ci-debug",
+                  "task_id": "PYTEST-CONTAIN",
+                  "requested_scopes": ["runs:read", "logs:read", "runs:rerun"]},
+            timeout=10, proxies=NO_PROXY_ENV,
+        ).json()
+        token_value, jti = response["token"], response["jti"]
+
+        honest = FlightRecorder(jti, "PYTEST-CONTAIN", "ci-debug-agent")
+        honest.tool_call("GET", "/runs")
+        assert call(token_value, "GET", "/runs").status_code == 200
+
+        # Two actions performed and deliberately not reported.
+        call(token_value, "GET", "/runs/4471/logs")
+        call(token_value, "POST", "/runs/4471/rerun")
+
+        time.sleep(0.3)
+        assert call(token_value, "GET", "/runs").status_code == 403
+
+        events = requests.get(PROXY + "/v1/containment", timeout=10,
+                              proxies=NO_PROXY_ENV).json()["events"]
+        assert any(e["jti"] == jti for e in events)
+
+        requests.post(BROKER + "/reinstate", json={"agent_id": "ci-debug-agent"},
+                      timeout=10, proxies=NO_PROXY_ENV)
+
+    def test_a_fresh_token_is_judged_on_its_own_behaviour(self):
+        """Containment is per token, so a reinstated agent is not pre-judged."""
+        requests.post(BROKER + "/reinstate", json={"agent_id": "ci-debug-agent"},
+                      timeout=10, proxies=NO_PROXY_ENV)
+        fresh = requests.post(
+            BROKER + "/token",
+            json={"agent_id": "ci-debug-agent",
+                  "bootstrap_secret": "bootstrap-ci-debug",
+                  "task_id": "PYTEST-FRESH",
+                  "requested_scopes": ["runs:read"]},
+            timeout=10, proxies=NO_PROXY_ENV,
+        ).json()
+        assert call(fresh["token"], "GET", "/runs").status_code == 200
+
+
+class TestIndependentAudit:
+    def test_export_bundle_is_self_contained(self):
+        bundle = requests.get(PROXY + "/v1/export", timeout=20,
+                              proxies=NO_PROXY_ENV).json()
+        for field in ["format", "public_key_pem", "chain_head", "entries"]:
+            assert field in bundle
+        assert bundle["entries"]
+
+    def test_standalone_auditor_verifies_a_clean_bundle(self):
+        """Build an isolated chain rather than trusting the shared database.
+
+        The demo deliberately tampers with data/ledger.db at the end, so a
+        test that audits whatever happens to be on disk is testing the last
+        thing that ran, not the auditor.
+        """
+        import json
+        import subprocess
+        import sys as _sys
+        import tempfile
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _sys.path.insert(0, root)
+        from ledger.store import Ledger
+
+        directory = tempfile.mkdtemp()
+        ledger = Ledger(db_path=os.path.join(directory, "l.db"),
+                        key_path=os.path.join(directory, "k.pem"))
+        for i in range(4):
+            ledger.append({
+                "agent_id": "test-agent", "agent_version": "1.0.0",
+                "owner": "o@example.com", "principal": "o@example.com",
+                "task_id": "T", "jti": "j", "method": "GET",
+                "path": "/runs/{}".format(i),
+                "decision": "DENY" if i == 2 else "ALLOW",
+                "reason": "test", "required_scope": "runs:read",
+                "status_code": 200, "request_digest": "a",
+                "response_digest": "b", "redactions": None,
+            })
+        entries = ledger.read_all()
+        bundle = {
+            "format": "non-repudiation-evidence-bundle/1",
+            "exported_at": "test",
+            "public_key_pem": ledger.public_key_pem(),
+            "chain_head": entries[-1]["entry_hash"],
+            "entry_count": len(entries),
+            "entries": entries,
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(bundle, handle)
+            path = handle.name
+
+        result = subprocess.run(
+            [sys.executable, os.path.join(root, "audit.py"), path],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0
+        assert "VERIFIED" in result.stdout
+
+    def test_standalone_auditor_catches_an_edited_bundle(self):
+        import json
+        import subprocess
+        import sys as _sys
+        import tempfile
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _sys.path.insert(0, root)
+        from ledger.store import Ledger
+
+        directory = tempfile.mkdtemp()
+        ledger = Ledger(db_path=os.path.join(directory, "l.db"),
+                        key_path=os.path.join(directory, "k.pem"))
+        for i in range(3):
+            ledger.append({
+                "agent_id": "test-agent", "agent_version": "1.0.0",
+                "owner": "o@example.com", "principal": "o@example.com",
+                "task_id": "T", "jti": "j", "method": "GET",
+                "path": "/runs/{}".format(i),
+                "decision": "DENY" if i == 1 else "ALLOW",
+                "reason": "test", "required_scope": "runs:read",
+                "status_code": 200, "request_digest": "a",
+                "response_digest": "b", "redactions": None,
+            })
+        entries = ledger.read_all()
+        bundle = {
+            "format": "non-repudiation-evidence-bundle/1",
+            "public_key_pem": ledger.public_key_pem(),
+            "chain_head": entries[-1]["entry_hash"],
+            "entries": entries,
+        }
+        for entry in bundle["entries"]:
+            if entry["decision"] == "DENY":
+                entry["decision"] = "ALLOW"
+                break
+        else:
+            import pytest as _pytest
+            _pytest.skip("no denied entry in the ledger to edit")
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(bundle, handle)
+            path = handle.name
+
+        result = subprocess.run(
+            [sys.executable, os.path.join(root, "audit.py"), path],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 1
+        assert "ALTERED" in result.stdout
+
+
 class TestEvidence:
     def test_every_call_lands_in_the_ledger(self, token):
         before = len(requests.get(PROXY + "/v1/ledger?limit=500", timeout=10,

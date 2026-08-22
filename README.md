@@ -130,8 +130,10 @@ attacks/run_attacks.py  eleven adversarial scenarios with expected outcomes
 scripts/benchmark.py measured proxy overhead
 analyzer/analyze.py  rule based and model based trace analysis
 scripts/demo.sh      narrated end to end demo for the presentation
-tests/               36 unit and integration tests
+tests/               42 unit and integration tests
+audit.py             standalone third party auditor, zero project imports
 docs/PITCH.md        slide content, judge questions, demo runbook
+docs/THREAT_MODEL.md what is defended, what is not, what is assumed
 dashboard/index.html live ledger and kill switch
 ```
 
@@ -144,6 +146,8 @@ python3 triggers/simulate_failure.py      # event triggered, nobody starts it
 python3 agent/isolation.py                # revoke one agent, others unaffected
 python3 scripts/benchmark.py              # measured overhead
 python3 agent/github_demo.py              # real GitHub API, same governance
+python3 agent/containment.py              # the agent lies, the system stops it
+python3 audit.py evidence-bundle.json     # independent audit, no imports from us
 python3 -m pytest tests/ -v               # 36 tests
 python3 agent/investigator.py --offline   # agent loop, no API key needed
 python3 attacks/run_attacks.py            # nine adversarial scenarios
