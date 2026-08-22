@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Non-Repudiation control plane</title>
+<style>
+  :root {
+    --bg: #0b0d11; --panel: #12151b; --line: #1f242d; --line2: #2b313c;
+    --text: #e8eaed; --dim: #8992a1; --faint: #5a6270;
+    --green: #4ade80; --red: #f87171; --amber: #fbbf24; --blue: #7dd3fc;
+    --violet: #b3a4f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, -apple-system, system-ui, sans-serif;
+    font-size: 13px; height: 100vh; overflow: hidden;
+  }
+  header {
+    padding: 10px 18px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 500; letter-spacing: .2px; }
+  header .sub { color: var(--faint); font-size: 12px; }
+  header .spacer { flex: 1; }
+  .stat { text-align: right; line-height: 1.25; }
+  .stat .n { font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+  main { display: grid; grid-template-columns: 240px 1fr 372px; height: calc(100vh - 47px); }
+  .col { overflow-y: auto; padding: 12px 14px; }
+  .col + .col { border-left: 1px solid var(--line); }
+  h2 {
+    font-size: 10px; color: var(--faint); font-weight: 500; margin: 0 0 9px;
+    text-transform: uppercase; letter-spacing: .8px;
+  }
+  .agent {
+    border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; margin-bottom: 8px;
+    background: var(--panel); transition: border-color .3s;
+  }
+  .agent.revoked { border-color: #5c2626; }
+  .agent .top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .agent .id { font-weight: 500; font-size: 12px; }
+  .agent .meta { color: var(--faint); font-size: 11px; margin-top: 5px; line-height: 1.5; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .dot.on { background: var(--green); box-shadow: 0 0 6px rgba(74,222,128,.7); }
+  .dot.off { background: var(--red); }
+  button {
+    background: transparent; color: var(--red); border: 1px solid #5c2626;
+    border-radius: 6px; padding: 4px 9px; cursor: pointer; font-size: 11px;
+    margin-top: 8px; font-family: inherit;
+  }
+  button:hover { background: #2a1414; }
+  button.on { color: var(--green); border-color: #245c36; }
+  button.on:hover { background: #14261a; }
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  th {
+    text-align: left; color: var(--faint); font-weight: 500; padding: 5px 7px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--bg); font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  }
+  td { padding: 5px 7px; border-bottom: 1px solid #14171d; vertical-align: top; }
+  tr.fresh { animation: flash 1.1s ease-out; }
+  @keyframes flash { from { background: #1d2530; } to { background: transparent; } }
+  tr.deny td:first-child { box-shadow: inset 2px 0 0 var(--red); }
+  tr.allow td:first-child { box-shadow: inset 2px 0 0 var(--green); }
+  tr.contain td:first-child { box-shadow: inset 2px 0 0 var(--amber); }
+  .d-ALLOW { color: var(--green); }
+  .d-DENY { color: var(--red); }
+  .d-CONTAIN { color: var(--amber); font-weight: 500; }
+  code { font-family: ui-monospace, "SF Mono", monospace; color: var(--blue); font-size: 11px; }
+  .hash { color: var(--faint); font-family: ui-monospace, monospace; font-size: 10px; }
+  .redact { color: var(--amber); font-size: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; margin-bottom: 9px; background: var(--panel); }
+  .card.alert { border-color: #6b4a12; background: #1a1509; }
+  .card.good { border-color: #245c36; }
+  .verdict { font-size: 12px; font-weight: 500; margin-bottom: 6px; }
+  .kv { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; padding: 2px 0; }
+  .kv b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+  select {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line2);
+    border-radius: 6px; padding: 5px 8px; font-size: 11px; width: 100%;
+    margin-bottom: 9px; font-family: inherit;
+  }
+  .ev { padding: 4px 0; border-bottom: 1px solid #14171d; font-size: 11px; line-height: 1.45; }
+  .ev .t { color: var(--blue); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+  .ev .s { color: var(--dim); }
+  .empty { color: var(--faint); font-size: 11px; padding: 8px 0; }
+  .banner {
+    background: #2a1b06; border: 1px solid #6b4a12; border-radius: 9px;
+    padding: 10px 12px; margin-bottom: 10px; font-size: 11.5px; line-height: 1.55;
+  }
+  .banner .h { color: var(--amber); font-weight: 500; margin-bottom: 4px; }
+
+  /* Trust tier 3. The ledger is evidence and the agent's telemetry is
+     narrative; both are records of something that happened. Analysis is an
+     opinion about those records, so it is deliberately drawn as an annotation
+     rather than as data: dashed edge, no solid fill, its own accent colour.
+     Nothing in this panel should ever be mistaken for a signed entry. */
+  .derived {
+    border: 1px dashed #3f3a5c; border-left: 2px solid var(--violet);
+    border-radius: 9px; padding: 9px 11px; margin-bottom: 9px;
+    background: rgba(139,124,246,.045);
+  }
+  .derived .tag {
+    color: var(--violet); font-size: 9px; text-transform: uppercase;
+    letter-spacing: .7px; display: block; margin-bottom: 6px;
+  }
+  .finding { padding: 5px 0; border-top: 1px solid #1b1e2a; line-height: 1.5; }
+  .finding:first-of-type { border-top: 0; }
+  .finding .sev {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+    padding: 1px 5px; border-radius: 4px; margin-right: 5px;
+  }
+  .sev.critical { color: var(--red); background: #2c1414; }
+  .sev.high { color: #fca5a5; background: #2a1717; }
+  .sev.medium { color: var(--amber); background: #2a2109; }
+  .sev.low { color: var(--blue); background: #0e2029; }
+  .sev.info { color: var(--faint); background: #191c23; }
+  .finding .ty { color: var(--text); font-size: 11px; }
+  .finding .de { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .finding .no { color: var(--faint); font-size: 10px; margin-top: 2px; font-style: italic; }
+  details.merged { margin-top: 7px; }
+  details.merged summary {
+    color: var(--violet); font-size: 10px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: .6px;
+  }
+  .tl { font-size: 10.5px; padding: 2px 0 2px 7px; line-height: 1.45; }
+  .tl.t { border-left: 2px solid var(--green); color: var(--dim); }
+  .tl.u { border-left: 2px dashed var(--line2); color: var(--faint); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Non-Repudiation control plane</h1>
+  <span class="sub">attributable agent actions</span>
+  <span class="spacer"></span>
+  <div class="stat"><div class="n" id="s-total">0</div><div class="l">recorded</div></div>
+  <div class="stat"><div class="n" id="s-allow" style="color:var(--green)">0</div><div class="l">allowed</div></div>
+  <div class="stat"><div class="n" id="s-deny" style="color:var(--red)">0</div><div class="l">refused</div></div>
+  <div class="stat"><div class="n" id="s-agents">0</div><div class="l">agents</div></div>
+</header>
+<main>
+  <div class="col">
+    <h2>Agents</h2>
+    <div id="agents"></div>
+    <h2 style="margin-top:16px">Evidence</h2>
+    <div class="card" id="chaincard">
+      <div class="kv"><span>chain head</span></div>
+      <div class="hash" id="head" style="margin-top:3px">waiting</div>
+      <button class="on" style="width:100%" onclick="exportBundle()">Export bundle</button>
+      <div class="kv" style="margin-top:7px;color:var(--faint);display:block;line-height:1.45">
+        Verify it yourself with<br><code>python3 audit.py bundle.json</code>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h2>Signed ledger, live</h2>
+    <div id="contain-banner"></div>
+    <table>
+      <thead><tr>
+        <th style="width:34px">#</th><th style="width:64px">Decision</th>
+        <th>Action</th><th style="width:110px">Agent</th>
+        <th style="width:150px">Task</th><th style="width:82px">Scope</th>
+        <th style="width:66px">Redacted</th><th style="width:74px">Hash</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h2>Reconciliation</h2>
+    <select id="tokenpick" onchange="loadRecon()"></select>
+    <div id="recon"></div>
+    <h2 style="margin-top:14px">Analysis <span style="color:var(--violet)">derived, not evidence</span></h2>
+    <div id="analysis"></div>
+    <h2 style="margin-top:14px">Agent's own account</h2>
+    <div id="trace"></div>
+  </div>
+</main>
+
+<script>
+const BROKER = "http://127.0.0.1:8081";
+let seen = new Set();
+let firstLoad = true;
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+}
+
+async function j(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+async function loadAgents() {
+  const agents = await j(BROKER + "/agents");
+  document.getElementById("s-agents").textContent = agents.length;
+  document.getElementById("agents").innerHTML = agents.map(a => {
+    const on = a.status === "active";
+    return `<div class="agent ${on ? "" : "revoked"}">
+      <div class="top">
+        <span class="id">${esc(a.agent_id)}</span>
+        <span class="dot ${on ? "on" : "off"}"></span>
+      </div>
+      <div class="meta">v${esc(a.agent_version)}<br>${esc(a.owner)}<br>${esc(a.max_scopes.join(", "))}</div>
+      ${on
+        ? `<button onclick="setState('${esc(a.agent_id)}','revoke')">Revoke now</button>`
+        : `<button class="on" onclick="setState('${esc(a.agent_id)}','reinstate')">Reinstate</button>`}
+    </div>`;
+  }).join("");
+}
+
+async function setState(id, action) {
+  await fetch(BROKER + "/" + action, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({agent_id: id, reason: "from control plane"})
+  });
+  loadAgents();
+}
+
+async function loadLedger() {
+  const data = await j("/v1/ledger?limit=80");
+  const entries = data.entries;
+  document.getElementById("s-total").textContent = entries.length;
+  document.getElementById("s-allow").textContent =
+    entries.filter(e => e.decision === "ALLOW").length;
+  document.getElementById("s-deny").textContent =
+    entries.filter(e => e.decision === "DENY").length;
+  if (entries.length) document.getElementById("head").textContent =
+    entries[0].entry_hash.slice(0, 40);
+
+  document.getElementById("rows").innerHTML = entries.map(e => {
+    const isNew = !firstLoad && !seen.has(e.seq);
+    seen.add(e.seq);
+    const cls = e.decision.toLowerCase();
+    return `<tr class="${cls} ${isNew ? "fresh" : ""}">
+      <td>${e.seq}</td>
+      <td class="d-${esc(e.decision)}">${esc(e.decision)}</td>
+      <td><code>${esc(e.method)} ${esc(e.path)}</code></td>
+      <td>${esc(e.agent_id || "-")}</td>
+      <td style="color:var(--dim)">${esc(e.task_id || "-")}</td>
+      <td style="color:var(--dim)">${esc(e.required_scope || "-")}</td>
+      <td class="redact">${esc(e.redactions || "")}</td>
+      <td class="hash">${esc((e.entry_hash || "").slice(0, 8))}</td>
+    </tr>`;
+  }).join("");
+  firstLoad = false;
+}
+
+async function loadContainment() {
+  const data = await j("/v1/containment");
+  const box = document.getElementById("contain-banner");
+  if (!data.events.length) { box.innerHTML = ""; return; }
+  box.innerHTML = data.events.map(e => `<div class="banner">
+    <div class="h">Agent contained automatically</div>
+    <b>${esc(e.agent_id)}</b> performed ${e.observed} actions and reported ${e.reported}.
+    It was revoked without anyone being asked.<br>
+    Unreported: ${e.concealed.map(c => `<code>${esc(c)}</code>`).join(", ")}<br>
+    <span style="color:var(--faint)">task ${esc(e.task_id)}, on behalf of ${esc(e.principal)}</span>
+  </div>`).join("");
+}
+
+async function loadTokens() {
+  const data = await j("/v1/tokens");
+  const pick = document.getElementById("tokenpick");
+  const current = pick.value;
+  if (pick.options.length !== data.tokens.length) {
+    pick.innerHTML = data.tokens.map(t =>
+      `<option value="${esc(t)}">token ${esc(t.slice(0, 8))}</option>`).join("");
+    if (current && data.tokens.includes(current)) pick.value = current;
+    loadRecon();
+  }
+}
+
+async function loadRecon() {
+  const jti = document.getElementById("tokenpick").value;
+  if (!jti) return;
+  const r = await j("/v1/reconcile/" + jti);
+  const ok = r.verdict === "CONSISTENT";
+  document.getElementById("recon").innerHTML = `
+    <div class="card ${ok ? "good" : "alert"}">
+      <div class="verdict" style="color:${ok ? "var(--green)" : "var(--amber)"}">${esc(r.verdict)}</div>
+      <div class="kv"><span>observed by proxy</span><b>${r.observed_by_proxy}</b></div>
+      <div class="kv"><span>reported by agent</span><b>${r.reported_by_agent}</b></div>
+      <div class="kv"><span>internal events</span><b>${r.internal_events}</b></div>
+      ${r.concealed.length ? `<div style="margin-top:7px;color:var(--red);font-size:11px">
+        concealed<br>${r.concealed.map(c => `<code>${esc(c)}</code>`).join("<br>")}</div>` : ""}
+      ${r.phantom.length ? `<div style="margin-top:7px;color:var(--red);font-size:11px">
+        phantom<br>${r.phantom.map(c => `<code>${esc(c)}</code>`).join("<br>")}</div>` : ""}
+    </div>`;
+
+  const events = (await j("/v1/telemetry?limit=300")).events.filter(e => e.jti === jti);
+  document.getElementById("trace").innerHTML = events.length
+    ? events.map(e => `<div class="ev">
+        <span class="t">${esc(e.event_type)}</span>
+        ${e.confidence ? `<span style="color:var(--amber)"> ${e.confidence}</span>` : ""}
+        <div class="s">${esc(e.summary || "")}
+        ${e.method ? `<code>${esc(e.method)} ${esc(e.path)}</code>` : ""}</div>
+      </div>`).join("")
+    : `<div class="empty">Nothing self reported under this token. The proxy
+       still recorded everything it did.</div>`;
+
+  loadAnalysis();
+}
+
+const SEVERITIES = ["critical", "high", "medium", "low", "info"];
+
+function sevClass(s) {
+  return SEVERITIES.indexOf(s) >= 0 ? s : "info";
+}
+
+// Renders trust tier 3. Everything here is derived: computed by the analyzer
+// from the ledger and the agent's telemetry, and in part written by a model.
+// It is drawn as an annotation rather than as data on purpose, because the one
+// thing this panel must never do is look like a signed entry.
+async function loadAnalysis() {
+  const jti = document.getElementById("tokenpick").value;
+  const box = document.getElementById("analysis");
+  if (!jti) { box.innerHTML = ""; return; }
+
+  let a;
+  try { a = await j("/v1/analysis?jti=" + encodeURIComponent(jti)); }
+  catch (e) { return; }
+
+  if (!a.available) {
+    box.innerHTML = `<div class="empty">Nothing analysed for this token yet.<br>
+      <code>python3 analyzer/analyze.py --jti ${esc(jti)}</code></div>`;
+    return;
+  }
+
+  const s = a.summary || {};
+  const m = a.model_analysis;
+
+  const warn = s.trace_complete === false
+    ? `<div class="de" style="color:var(--red)">Based on a partial trace, so
+       findings may be wrong by omission.</div>` : "";
+
+  const findings = (a.findings || []).map(f => `<div class="finding">
+      <span class="sev ${sevClass(f.severity)}">${esc(f.severity)}</span>
+      <span class="ty">${esc(f.type)}</span>
+      <div class="de">${esc(f.detail)}</div>
+      ${f.note ? `<div class="no">${esc(f.note)}</div>` : ""}
+    </div>`).join("");
+
+  const model = m
+    ? `<div class="finding">
+         <span class="sev info">model</span><span class="ty">interpretation</span>
+         <div class="de">${esc(m.assessment || m.error || "")}</div>
+         ${m.proposed_instruction_change
+            ? `<div class="no">proposed instruction change:
+               ${esc(m.proposed_instruction_change)}</div>` : ""}
+       </div>`
+    : `<div class="no" style="margin-top:7px">Model interpretation not run.
+       Every finding above was computed in plain code from the two streams.</div>`;
+
+  const timeline = (a.timeline || []).map(t =>
+    `<div class="tl ${t.trusted ? "t" : "u"}">${esc(t.text)}</div>`).join("");
+
+  box.innerHTML = `<div class="derived">
+    <span class="tag">analyzer ${esc(a.analyzer_version || "?")} &middot;
+      interpretation, not a record</span>
+    <div class="kv"><span>headline</span><b>${esc(s.headline_severity || "-")}</b></div>
+    <div class="kv"><span>actions observed</span><b>${s.actions_observed}</b></div>
+    <div class="kv"><span>refused out of scope</span><b>${s.refused_out_of_scope}</b></div>
+    <div class="kv"><span>elapsed</span><b>${s.elapsed_seconds}s</b></div>
+    ${warn}${findings}${model}
+    <details class="merged">
+      <summary>merged timeline, both streams</summary>${timeline}
+    </details>
+  </div>`;
+}
+
+async function exportBundle() {
+  const data = await j("/v1/export");
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "evidence-bundle.json";
+  a.click();
+}
+
+function tick() {
+  loadAgents(); loadLedger(); loadTokens(); loadContainment(); loadAnalysis();
+}
+tick();
+setInterval(tick, 1500);
+</script>
+</body>
+</html>
