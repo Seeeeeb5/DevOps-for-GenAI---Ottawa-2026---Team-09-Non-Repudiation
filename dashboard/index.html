@@ -91,6 +91,17 @@
     padding: 10px 12px; margin-bottom: 10px; font-size: 11.5px; line-height: 1.55;
   }
   .banner .h { color: var(--amber); font-weight: 500; margin-bottom: 4px; }
+  .filter-bar { display: flex; gap: 6px; margin-bottom: 10px; }
+  .filter-btn {
+    background: var(--panel); color: var(--dim); border: 1px solid var(--line2);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 11px;
+    font-family: inherit; transition: all .15s;
+  }
+  .filter-btn:hover { border-color: var(--faint); color: var(--text); }
+  .filter-btn.active { color: var(--text); border-color: var(--blue); background: #0e1a24; }
+  .filter-btn.active-allow { color: var(--green); border-color: var(--green); background: #0e1f14; }
+  .filter-btn.active-deny { color: var(--red); border-color: var(--red); background: #1f0e0e; }
+  .filter-btn.active-contain { color: var(--amber); border-color: var(--amber); background: #1f1a0e; }
 
   /* Trust tier 3. The ledger is evidence and the agent's telemetry is
      narrative; both are records of something that happened. Analysis is an
@@ -157,6 +168,12 @@
 
   <div class="col">
     <h2>Signed ledger, live</h2>
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="setFilter('ALL')">All</button>
+      <button class="filter-btn" onclick="setFilter('ALLOW')">Allow</button>
+      <button class="filter-btn" onclick="setFilter('DENY')">Deny</button>
+      <button class="filter-btn" onclick="setFilter('CONTAIN')">Contain</button>
+    </div>
     <div id="contain-banner"></div>
     <table>
       <thead><tr>
@@ -187,6 +204,23 @@
 let seen = new Set();
 let firstLoad = true;
 let selectedJti = null;  // null = show all, otherwise filter by token
+let decisionFilter = "ALL";  // ALL, ALLOW, DENY, CONTAIN
+
+function setFilter(f) {
+  decisionFilter = f;
+  selectedJti = null;  // Clear token filter so decision filter works independently
+  document.getElementById("tokenpick").value = "";  // Reset dropdown to "All tokens"
+  document.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.classList.remove("active", "active-allow", "active-deny", "active-contain");
+    if (btn.textContent.toUpperCase() === f || (f === "ALL" && btn.textContent === "All")) {
+      if (f === "ALLOW") btn.classList.add("active-allow");
+      else if (f === "DENY") btn.classList.add("active-deny");
+      else if (f === "CONTAIN") btn.classList.add("active-contain");
+      else btn.classList.add("active");
+    }
+  });
+  loadLedger();
+}
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c => (
@@ -246,6 +280,11 @@ async function loadLedger() {
     ? entries.filter(e => e.jti === selectedJti)
     : entries;
 
+  // Filter by decision type
+  const displayed = decisionFilter === "ALL"
+    ? filtered
+    : filtered.filter(e => e.decision === decisionFilter);
+
   document.getElementById("s-total").textContent = entries.length;
   document.getElementById("s-allow").textContent =
     entries.filter(e => e.decision === "ALLOW").length;
@@ -254,7 +293,7 @@ async function loadLedger() {
   if (entries.length) document.getElementById("head").textContent =
     entries[0].entry_hash.slice(0, 40);
 
-  document.getElementById("rows").innerHTML = filtered.map(e => {
+  document.getElementById("rows").innerHTML = displayed.map(e => {
     const isNew = !firstLoad && !seen.has(e.seq);
     seen.add(e.seq);
     const cls = e.decision.toLowerCase();
@@ -289,8 +328,9 @@ async function loadTokens() {
   const data = await j("/v1/tokens");
   const pick = document.getElementById("tokenpick");
   const current = pick.value;
-  if (pick.options.length !== data.tokens.length) {
-    pick.innerHTML = data.tokens.map(t =>
+  if (pick.options.length !== data.tokens.length + 1) {
+    pick.innerHTML = `<option value="">All tokens</option>` +
+      data.tokens.map(t =>
       `<option value="${esc(t)}">token ${esc(t.slice(0, 8))}</option>`).join("");
     if (current && data.tokens.includes(current)) pick.value = current;
     loadRecon();
@@ -299,7 +339,14 @@ async function loadTokens() {
 
 async function loadRecon() {
   const jti = document.getElementById("tokenpick").value;
-  if (!jti) return;
+  if (!jti) {
+    selectedJti = null;
+    document.getElementById("recon").innerHTML = "";
+    document.getElementById("trace").innerHTML = "";
+    document.getElementById("analysis").innerHTML = "";
+    loadLedger();
+    return;
+  }
   selectedJti = jti;
   loadLedger();  // Re-render ledger filtered to this token
   const r = await j("/v1/reconcile/" + jti);
