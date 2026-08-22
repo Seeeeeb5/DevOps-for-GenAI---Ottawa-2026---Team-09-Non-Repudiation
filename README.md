@@ -124,12 +124,17 @@ ledger/telemetry.py  untrusted telemetry store and reconciliation
 policies/policy.json the scope rules, edited as data not code
 attacks/run_attacks.py  nine adversarial scenarios with expected outcomes
 analyzer/analyze.py  rule based and model based trace analysis
+scripts/demo.sh      narrated end to end demo for the presentation
+tests/               36 unit and integration tests
+docs/PITCH.md        slide content, judge questions, demo runbook
 dashboard/index.html live ledger and kill switch
 ```
 
 ## Other entry points
 
 ```bash
+bash scripts/demo.sh                      # the whole story, one command
+python3 -m pytest tests/ -v               # 36 tests
 python3 agent/investigator.py --offline   # agent loop, no API key needed
 python3 attacks/run_attacks.py            # nine adversarial scenarios
 python3 analyzer/analyze.py --latest      # analyse the most recent trace
