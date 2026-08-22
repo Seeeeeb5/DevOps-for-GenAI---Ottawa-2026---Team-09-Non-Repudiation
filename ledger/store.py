@@ -127,27 +127,41 @@ class Ledger:
         return row["seq"], row["entry_hash"]
 
     def append(self, record):
-        """Append one record, chaining it to the current head and signing it."""
-        last_seq, prev_hash = self.head()
-        entry = dict(record)
-        entry["seq"] = last_seq + 1
-        entry["ts"] = now_iso()
-        entry["prev_hash"] = prev_hash
+        """Append one record, chaining it to the current head and signing it.
 
-        payload = {field: entry.get(field) for field in SIGNED_FIELDS}
-        entry_hash = sha256_hex(canonical_json(payload))
-        signature = self._signing_key.sign(entry_hash.encode()).hex()
-        entry["entry_hash"] = entry_hash
-        entry["signature"] = signature
-
-        columns = SIGNED_FIELDS + ["entry_hash", "signature"]
-        placeholders = ",".join("?" for _ in columns)
+        The head lookup and insert happen in a single transaction on one
+        connection so that concurrent appends cannot read the same prev_hash.
+        SQLite's default locking serializes writers, but using one connection
+        makes the intent explicit and avoids a TOCTOU gap.
+        """
         conn = self._connect()
-        conn.execute(
-            "INSERT INTO entries ({}) VALUES ({})".format(",".join(columns), placeholders),
-            [entry.get(c) for c in columns],
-        )
-        conn.commit()
+        try:
+            row = conn.execute(
+                "SELECT seq, entry_hash FROM entries ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            last_seq = row["seq"] if row else 0
+            prev_hash = row["entry_hash"] if row else GENESIS_HASH
+
+            entry = dict(record)
+            entry["seq"] = last_seq + 1
+            entry["ts"] = now_iso()
+            entry["prev_hash"] = prev_hash
+
+            payload = {field: entry.get(field) for field in SIGNED_FIELDS}
+            entry_hash = sha256_hex(canonical_json(payload))
+            signature = self._signing_key.sign(entry_hash.encode()).hex()
+            entry["entry_hash"] = entry_hash
+            entry["signature"] = signature
+
+            columns = SIGNED_FIELDS + ["entry_hash", "signature"]
+            placeholders = ",".join("?" for _ in columns)
+            conn.execute(
+                "INSERT INTO entries ({}) VALUES ({})".format(",".join(columns), placeholders),
+                [entry.get(c) for c in columns],
+            )
+            conn.commit()
+        finally:
+            conn.close()
         conn.close()
         return entry
 
