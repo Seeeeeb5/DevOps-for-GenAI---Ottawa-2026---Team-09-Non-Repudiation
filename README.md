@@ -4,8 +4,6 @@
 
 Team 09, Track 1 (Autonomous DevOps), DevOps for GenAI Ottawa 2026.
 
-Project lead: Freeman Liu. Participants: Jiaqi Li, Nina Li, Sebastian Petelle.
-
 ## The problem
 
 Nobody lets an agent run unattended against production, and the reason is not
@@ -33,14 +31,31 @@ PII, then forwards using a credential the agent never sees.
 record signed with a key the agent cannot reach. The agent cannot forge a
 record and cannot deny one.
 
-### Why capture at the proxy instead of in an agent SDK
+**Flight recorder SDK.** Records what happens inside the agent: model calls,
+hypotheses, retries. The proxy cannot see any of this, because none of it
+crosses the network boundary.
 
-An SDK records what the agent chooses to report. An agent that goes off the
-rails can simply not report. The proxy is a path the agent cannot avoid,
-because the proxy holds the only credential the target accepts. One
-interception point gives us authentication, authorisation, redaction and
-tamper evident capture at the same time, and it works with any agent framework
-without writing an adapter for each one.
+### Two streams, two different trust levels
+
+The proxy and the SDK record different things and carry different weight, and
+conflating them is the mistake most agent observability stacks make.
+
+The proxy records what the agent *did*. This has to be unforgeable and
+unskippable, because it is what accountability rests on. The agent has no
+control over it, since the proxy holds the only credential the target accepts.
+
+The SDK records why the agent did it. This is self reported, so it cannot be
+trusted on its own. An agent can lie, or stay silent, and an observability
+stack built only on an SDK would never know.
+
+What makes the self reported stream useful anyway is that both streams carry
+the same token id. The proxy independently knows how many calls happened under
+a given token. If the agent admits to fewer, the gap is evidence of
+concealment. If it claims more, it is inventing work it never did. Anchoring
+an untrusted narrative to an independently captured spine is what turns it
+from unverifiable into verifiable.
+
+`GET /v1/reconcile/{jti}` returns that comparison.
 
 ## Run it
 
@@ -52,8 +67,8 @@ bash scripts/run_all.sh
 python3 agent/demo_agent.py
 ```
 
-On macOS, run source before run_all.sh, otherwise the script cannot find
-uvicorn. Tested on Python 3.12.
+On macOS, run source before run_all.sh, otherwise the script cannot
+find uvicorn. Tested on Python 3.12.
 
 Dashboard at http://127.0.0.1:8080/
 
@@ -70,12 +85,20 @@ before anything was stored.
 it to delete the main branch and deploy to production. Both are refused at the
 proxy, before the target is ever contacted, and both refusals are recorded.
 
-**Act 3. Kill switch.** The owner revokes the agent from the dashboard. The
+**Act 3. Reconciliation, honest baseline.** Six calls observed by the proxy,
+six reported by the agent, plus six internal events the proxy could never have
+seen. Verdict: consistent.
+
+**Act 4. A dishonest agent.** A second agent performs three calls but omits two
+of them from its own telemetry. Reconciliation names both concealed actions.
+This is the case an SDK only stack cannot detect at all.
+
+**Act 5. Kill switch.** The owner revokes the agent from the dashboard. The
 token is still cryptographically valid and has not expired, but the next call
 is refused in well under a second, because revocation is enforced at the proxy
 rather than left to token expiry.
 
-**Act 4. Audit.** `ledger/verify.py` recomputes every hash, checks every chain
+**Act 6. Audit.** `ledger/verify.py` recomputes every hash, checks every chain
 link and verifies every signature. Then edit one row in `data/ledger.db` to
 make a denied action look allowed, run the verifier again, and it names the
 exact entry that was changed.
@@ -94,9 +117,43 @@ proxy/redact.py      secret and PII redaction
 ledger/store.py      hash chained, Ed25519 signed evidence store
 ledger/verify.py     standalone auditor
 target/app.py        mock CI/CD system standing in for GitLab or Jenkins
-agent/demo_agent.py  the governed agent, runs the four act scenario
+agent/sdk.py         flight recorder for in-agent events, self reported
+agent/investigator.py real agent loop, live model or offline replay
+agent/demo_agent.py  scripted walkthrough of every act
+ledger/telemetry.py  untrusted telemetry store and reconciliation
+policies/policy.json the scope rules, edited as data not code
+attacks/run_attacks.py  nine adversarial scenarios with expected outcomes
+analyzer/analyze.py  rule based and model based trace analysis
 dashboard/index.html live ledger and kill switch
 ```
+
+## Other entry points
+
+```bash
+python3 agent/investigator.py --offline   # agent loop, no API key needed
+python3 attacks/run_attacks.py            # nine adversarial scenarios
+python3 analyzer/analyze.py --latest      # analyse the most recent trace
+```
+
+`agent/investigator.py` runs a real tool loop. With `ANTHROPIC_API_KEY` set it
+asks a model for each decision. Without one it replays a scripted reasoning
+path of the same shape, so the demo never depends on a network call.
+
+`attacks/run_attacks.py` covers prompt injection, privilege escalation, path
+traversal, method swapping, a missing token and a forged token. Each scenario
+declares the outcome it expects, so the security claim is measurable rather
+than asserted.
+
+`analyzer/analyze.py` computes findings in plain code first (duplicate calls,
+denied attempts, retry loops, cost, telemetry mismatch) and only asks a model
+for the parts that need judgement.
+
+## Owners
+
+- Broker, proxy, ledger, integration: Freeman
+- Investigation agent and its tools: Nina
+- Policy rules and attack scenarios: Jiaqi
+- Trace explorer and AI analysis: Sebastian
 
 ## Known limits of the prototype
 

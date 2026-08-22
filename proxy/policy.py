@@ -1,37 +1,89 @@
-"""Request to scope mapping.
+"""Policy engine.
 
-Every request that reaches the proxy is mapped to exactly one required scope.
-If the agent token does not carry that scope, the call is denied before it ever
-reaches the target system. Anything that does not match a rule is denied by
-default, so adding a new endpoint to the target does not silently widen what
-agents can do.
+Rules live in policies/policy.json rather than in this file, so that changing
+what an agent may do is a reviewable diff to a data file instead of a code
+change. Every request is mapped to exactly one required scope. Anything that
+matches no rule is denied, so adding an endpoint to the target system does not
+silently widen what agents can reach.
 """
 
+import json
+import os
 import re
 
-# Each rule is (method, compiled path pattern, required scope, risk label).
-RULES = [
-    ("GET", re.compile(r"^/runs/?$"), "runs:read", "low"),
-    ("GET", re.compile(r"^/runs/[^/]+/?$"), "runs:read", "low"),
-    ("GET", re.compile(r"^/runs/[^/]+/logs/?$"), "logs:read", "low"),
-    ("POST", re.compile(r"^/runs/[^/]+/rerun/?$"), "runs:rerun", "medium"),
-    ("POST", re.compile(r"^/deploy/?$"), "deploy:write", "high"),
-    ("DELETE", re.compile(r"^/branches/[^/]+/?$"), "branches:delete", "high"),
-]
+POLICY_PATH = os.environ.get(
+    "POLICY_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "policies",
+        "policy.json",
+    ),
+)
+
+_cache = {"mtime": None, "rules": [], "meta": {}}
+
+
+def load(force=False):
+    """Load the policy file, reloading automatically when it changes on disk."""
+    try:
+        mtime = os.path.getmtime(POLICY_PATH)
+    except OSError:
+        return _cache["rules"]
+
+    if force or _cache["mtime"] != mtime:
+        with open(POLICY_PATH) as handle:
+            document = json.load(handle)
+        compiled = []
+        for rule in document.get("rules", []):
+            compiled.append({
+                "id": rule["id"],
+                "method": rule["method"].upper(),
+                "pattern": re.compile(rule["path"]),
+                "scope": rule["scope"],
+                "risk": rule.get("risk", "unknown"),
+                "note": rule.get("note", ""),
+            })
+        _cache["rules"] = compiled
+        _cache["mtime"] = mtime
+        _cache["meta"] = {
+            "version": document.get("version"),
+            "rule_count": len(compiled),
+        }
+    return _cache["rules"]
+
+
+def meta():
+    load()
+    return _cache["meta"]
+
+
+def describe():
+    """Return the rule set in a form the dashboard can display."""
+    return [
+        {
+            "id": r["id"],
+            "method": r["method"],
+            "path": r["pattern"].pattern,
+            "scope": r["scope"],
+            "risk": r["risk"],
+            "note": r["note"],
+        }
+        for r in load()
+    ]
 
 
 def resolve(method, path):
-    """Return (required_scope, risk) for a request, or (None, None) if unknown."""
+    """Return (rule_id, required_scope, risk) for a request, or Nones."""
     normalized = path if path.startswith("/") else "/" + path
-    for rule_method, pattern, scope, risk in RULES:
-        if rule_method == method.upper() and pattern.match(normalized):
-            return scope, risk
-    return None, None
+    for rule in load():
+        if rule["method"] == method.upper() and rule["pattern"].match(normalized):
+            return rule["id"], rule["scope"], rule["risk"]
+    return None, None, None
 
 
 def decide(method, path, token_scopes):
     """Return (allowed, required_scope, risk, reason)."""
-    required, risk = resolve(method, path)
+    rule_id, required, risk = resolve(method, path)
     if required is None:
         return False, None, None, "no policy rule matches this request, denied by default"
     if required not in token_scopes:
@@ -41,4 +93,4 @@ def decide(method, path, token_scopes):
             risk,
             "token does not carry the required scope {}".format(required),
         )
-    return True, required, risk, "scope {} present in token".format(required)
+    return True, required, risk, "rule {} allows this, scope {} present".format(rule_id, required)

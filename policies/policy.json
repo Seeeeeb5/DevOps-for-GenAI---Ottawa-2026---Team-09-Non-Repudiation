@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "description": "Scope rules for the revocation proxy. Anything not matched here is denied.",
+  "default_decision": "deny",
+  "rules": [
+    {
+      "id": "runs-list",
+      "method": "GET",
+      "path": "^/runs/?$",
+      "scope": "runs:read",
+      "risk": "low",
+      "note": "List recent pipeline runs"
+    },
+    {
+      "id": "runs-get",
+      "method": "GET",
+      "path": "^/runs/[^/]+/?$",
+      "scope": "runs:read",
+      "risk": "low",
+      "note": "Inspect one run"
+    },
+    {
+      "id": "runs-logs",
+      "method": "GET",
+      "path": "^/runs/[^/]+/logs/?$",
+      "scope": "logs:read",
+      "risk": "low",
+      "note": "Read build logs, may contain secrets, redaction applies"
+    },
+    {
+      "id": "runs-rerun",
+      "method": "POST",
+      "path": "^/runs/[^/]+/rerun/?$",
+      "scope": "runs:rerun",
+      "risk": "medium",
+      "note": "Retrigger a pipeline, consumes CI capacity"
+    },
+    {
+      "id": "deploy",
+      "method": "POST",
+      "path": "^/deploy/?$",
+      "scope": "deploy:write",
+      "risk": "high",
+      "note": "Ship to an environment, never granted to a debugging agent"
+    },
+    {
+      "id": "branch-delete",
+      "method": "DELETE",
+      "path": "^/branches/[^/]+/?$",
+      "scope": "branches:delete",
+      "risk": "high",
+      "note": "Destructive and irreversible"
+    },
+    {
+      "id": "secrets-read",
+      "method": "GET",
+      "path": "^/secrets/.*$",
+      "scope": "secrets:read",
+      "risk": "critical",
+      "note": "No agent role currently carries this scope"
+    }
+  ]
+}

@@ -39,6 +39,13 @@
     <div id="agents"></div>
   </aside>
   <section>
+    <h2>Reconciliation <span id="verdict" class="pill"></span></h2>
+    <div style="margin-bottom:10px">
+      <select id="tokenpick" onchange="loadRecon()" style="background:#171a21;color:#e6e6e6;border:1px solid #262a33;border-radius:6px;padding:6px 10px;font-size:12px"></select>
+    </div>
+    <div id="recon" style="font-size:12px;color:#8b93a1;margin-bottom:8px"></div>
+    <div id="trace" style="border:1px solid #262a33;border-radius:10px;padding:12px;margin-bottom:22px;font-size:12px;max-height:220px;overflow:auto"></div>
+
     <h2>Evidence ledger <span id="count" class="pill"></span></h2>
     <table>
       <thead>
@@ -100,7 +107,39 @@ async function loadLedger() {
     </tr>`).join("");
 }
 
-function tick() { loadAgents(); loadLedger(); }
+async function loadTokens() {
+  const res = await fetch(PROXY + "/v1/tokens");
+  const data = await res.json();
+  const pick = document.getElementById("tokenpick");
+  const current = pick.value;
+  if (pick.options.length !== data.tokens.length) {
+    pick.innerHTML = data.tokens.map(t => `<option value="${t}">${t.slice(0, 8)}</option>`).join("");
+    if (current && data.tokens.includes(current)) pick.value = current;
+    loadRecon();
+  }
+}
+
+async function loadRecon() {
+  const jti = document.getElementById("tokenpick").value;
+  if (!jti) return;
+  const res = await fetch(PROXY + "/v1/reconcile/" + jti);
+  const r = await res.json();
+  const badge = document.getElementById("verdict");
+  badge.textContent = r.verdict;
+  badge.className = "pill " + (r.verdict === "CONSISTENT" ? "ok" : "revoked");
+  let text = `proxy observed ${r.observed_by_proxy}, agent reported ${r.reported_by_agent}, ${r.internal_events} internal events`;
+  if (r.concealed.length) text += `<br><span style="color:#e2726a">concealed: ${r.concealed.join(", ")}</span>`;
+  if (r.phantom.length) text += `<br><span style="color:#e2726a">phantom: ${r.phantom.join(", ")}</span>`;
+  document.getElementById("recon").innerHTML = text;
+
+  const tres = await fetch(PROXY + "/v1/telemetry?limit=200");
+  const events = (await tres.json()).events.filter(e => e.jti === jti);
+  document.getElementById("trace").innerHTML = events.length
+    ? events.map(e => `<div style="padding:3px 0"><span style="color:#9fb6d1">${e.event_type}</span> ${e.summary || ""} ${e.method ? `<code>${e.method} ${e.path}</code>` : ""}${e.confidence ? ` <span style="color:#8b93a1">conf ${e.confidence}</span>` : ""}</div>`).join("")
+    : '<span style="color:#8b93a1">no self reported events for this token</span>';
+}
+
+function tick() { loadAgents(); loadLedger(); loadTokens(); }
 tick();
 setInterval(tick, 2000);
 </script>

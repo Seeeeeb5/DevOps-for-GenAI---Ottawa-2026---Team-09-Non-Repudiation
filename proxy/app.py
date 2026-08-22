@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import digest_of  # noqa: E402
 from ledger.store import Ledger  # noqa: E402
+from ledger.telemetry import TelemetryStore, reconcile  # noqa: E402
 from proxy import policy, redact  # noqa: E402
 
 BROKER_URL = os.environ.get("BROKER_URL", "http://127.0.0.1:8081")
@@ -49,6 +50,10 @@ ledger = Ledger(
     db_path=os.path.join(DATA_DIR, "ledger.db"),
     key_path=os.path.join(DATA_DIR, "ledger_key.pem"),
 )
+
+# Self reported agent telemetry lives in the same file but a separate table,
+# because it does not carry the same trust level as the signed ledger.
+telemetry = TelemetryStore(db_path=os.path.join(DATA_DIR, "ledger.db"))
 
 _broker_public_key = None
 
@@ -99,6 +104,41 @@ def read_ledger(limit: int = 100):
         "public_key_pem": ledger.public_key_pem(),
         "entries": list(reversed(ledger.read_all(limit=limit))),
     }
+
+
+@app.post("/v1/report")
+async def report(request: Request):
+    """Accept one self reported event from an agent.
+
+    This endpoint is intentionally unauthenticated and intentionally trusting,
+    because nothing here is treated as evidence. It is narrative that gets
+    checked against the ledger, not a substitute for it.
+    """
+    event = await request.json()
+    telemetry.record(event)
+    return {"accepted": True}
+
+
+@app.get("/v1/telemetry")
+def read_telemetry(limit: int = 200):
+    """Return recent self reported events for the trace view."""
+    return {"events": telemetry.all_events(limit=limit)}
+
+
+@app.get("/v1/reconcile/{jti}")
+def reconcile_token(jti: str):
+    """Compare what the proxy observed against what the agent admitted to."""
+    return reconcile(ledger.read_all(), telemetry.by_token(jti), jti)
+
+
+@app.get("/v1/tokens")
+def list_tokens():
+    """List the token ids seen in the ledger, newest first, for the dashboard."""
+    seen = []
+    for entry in reversed(ledger.read_all()):
+        if entry.get("jti") and entry["jti"] not in seen:
+            seen.append(entry["jti"])
+    return {"tokens": seen}
 
 
 @app.get("/")
