@@ -31,6 +31,11 @@ python3 -m uvicorn proxy.app:app --port 8080 --log-level warning > logs/proxy.lo
 PROXY_PID=$!
 echo "  proxy     PID=$PROXY_PID  http://127.0.0.1:8080"
 
+# Start webhook trigger (port 8083)
+python3 -m uvicorn triggers.webhook:app --port 8083 --log-level warning > logs/webhook.log 2>&1 &
+WEBHOOK_PID=$!
+echo "  webhook   PID=$WEBHOOK_PID  http://127.0.0.1:8083"
+
 sleep 2
 
 echo ""
@@ -41,8 +46,8 @@ echo ""
 cleanup() {
     echo ""
     echo "Shutting down..."
-    kill $BROKER_PID $TARGET_PID $PROXY_PID 2>/dev/null || true
-    wait $BROKER_PID $TARGET_PID $PROXY_PID 2>/dev/null || true
+    kill $BROKER_PID $TARGET_PID $PROXY_PID $WEBHOOK_PID 2>/dev/null || true
+    wait $BROKER_PID $TARGET_PID $PROXY_PID $WEBHOOK_PID 2>/dev/null || true
     echo "Done."
 }
 trap cleanup EXIT

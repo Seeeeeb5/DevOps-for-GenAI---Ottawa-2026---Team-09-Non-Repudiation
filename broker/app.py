@@ -61,7 +61,7 @@ AGENTS = {
         "agent_version": "1.0.3",
         "owner": "freeman.liu@example.com",
         "bootstrap_secret": "bootstrap-ci-debug",
-        "max_scopes": ["runs:read", "logs:read", "runs:rerun"],
+        "max_scopes": ["runs:read", "logs:read", "runs:rerun", "github:read"],
         "status": "active",
         "revoked_at": None,
     },

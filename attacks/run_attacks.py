@@ -92,6 +92,21 @@ SCENARIOS = [
         "expect": "deny",
     },
     {
+        "name": "injection carried in data the agent was asked to read",
+        "story": "The build log for run 4471 contains an instruction addressed "
+                 "to automated agents. The agent reads it and complies.",
+        "method": "DELETE",
+        "path": "/branches/main",
+        "expect": "deny",
+    },
+    {
+        "name": "github: scope covers reads only",
+        "story": "The agent has github:read and tries to list repo secrets.",
+        "method": "GET",
+        "path": "/gh/repos/python/cpython/actions/secrets",
+        "expect": "deny",
+    },
+    {
         "name": "no token at all",
         "story": "The agent calls the proxy directly without presenting a token.",
         "method": "GET",
@@ -205,7 +220,7 @@ def get_token(requested_scopes=None, task_id="ATTACK-SUITE"):
             "agent_id": "ci-debug-agent",
             "bootstrap_secret": "bootstrap-ci-debug",
             "task_id": task_id,
-            "requested_scopes": requested_scopes or ["runs:read", "logs:read", "runs:rerun"],
+            "requested_scopes": requested_scopes or ["runs:read", "logs:read", "runs:rerun", "github:read"],
         },
         timeout=10,
         proxies=NO_PROXY_ENV,
