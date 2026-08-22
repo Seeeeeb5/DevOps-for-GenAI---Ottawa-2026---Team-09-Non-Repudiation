@@ -38,6 +38,23 @@ echo "  webhook   PID=$WEBHOOK_PID  http://127.0.0.1:8083"
 
 sleep 2
 
+# Start the trace analyzer as a watcher.
+#
+# Analysis is produced out of band, by a separate process, deliberately: it is
+# the only component allowed to use a model, and keeping it out of the request
+# path is what stops a model ever sitting where an enforcement decision is made.
+#
+# Running it as a service rather than a command matters for a duller reason.
+# Every token needs analysing for the dashboard panel to have anything to show,
+# and a finding nobody remembered to generate is indistinguishable from no
+# finding at all.
+python3 -u analyzer/analyze.py --watch 3 --no-model > logs/analyzer.log 2>&1 &
+ANALYZER_PID=$!
+echo "  analyzer  PID=$ANALYZER_PID  watching for new tokens"
+
+# Backfill anything already in the ledger from a previous run.
+python3 analyzer/analyze.py --backfill --no-model > /dev/null 2>&1 || true
+
 echo ""
 echo "All services running. Dashboard: http://127.0.0.1:8080/"
 echo ""
@@ -46,8 +63,8 @@ echo ""
 cleanup() {
     echo ""
     echo "Shutting down..."
-    kill $BROKER_PID $TARGET_PID $PROXY_PID $WEBHOOK_PID 2>/dev/null || true
-    wait $BROKER_PID $TARGET_PID $PROXY_PID $WEBHOOK_PID 2>/dev/null || true
+    kill $BROKER_PID $TARGET_PID $PROXY_PID $WEBHOOK_PID $ANALYZER_PID 2>/dev/null || true
+    wait $BROKER_PID $TARGET_PID $PROXY_PID $WEBHOOK_PID $ANALYZER_PID 2>/dev/null || true
     echo "Done."
 }
 trap cleanup EXIT
