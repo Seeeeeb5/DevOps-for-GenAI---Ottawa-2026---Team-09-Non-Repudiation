@@ -84,7 +84,10 @@ python3 ledger/verify.py --db data/ledger.db --key data/ledger_key.pem
 
 echo ""
 echo "========================================================================"
-echo "ALL DONE. Dashboard still live at http://127.0.0.1:8080/"
-echo "Press Enter to shut down services..."
+echo "ALL DONE. Starting live traffic simulator..."
+echo "Dashboard: http://127.0.0.1:8080/"
+echo "Live traffic running (Ctrl+C to stop and shut down)"
 echo "========================================================================"
-read -r
+
+# Run live traffic in foreground (Ctrl+C triggers the EXIT trap for cleanup)
+python3 scripts/live_traffic.py --fast
