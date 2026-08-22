@@ -94,7 +94,11 @@ def check_and_contain(claims):
     if jti in CONTAINED:
         return None
 
-    result = reconcile(ledger.read_all(), telemetry.by_token(jti), jti)
+    # Only this token's entries are relevant, so only they are read. Reading
+    # the whole ledger here made the cost of every allowed call grow with the
+    # size of the ledger: measured +35 ms at an empty ledger rising to +53 ms
+    # at 1435 entries, against a flat +22 ms with containment disabled.
+    result = reconcile(ledger.by_token(jti), telemetry.by_token(jti), jti)
 
     # Only act when the agent reported something. An agent with no telemetry
     # at all is not instrumented, which is a configuration gap rather than
@@ -173,11 +177,21 @@ def health():
 
 
 @app.get("/v1/ledger")
-def read_ledger(limit: int = 100):
-    """Expose the ledger so the dashboard can render the live trace."""
+def read_ledger(limit: int = 100, jti: str = None):
+    """Expose the ledger so the dashboard can render the live trace.
+
+    Passing jti returns every entry for that token and ignores limit. A client
+    that filters by token itself has to guess a limit large enough to still
+    contain the token it wants, and silently analyses a partial trace when the
+    guess is wrong.
+    """
+    if jti:
+        entries = ledger.by_token(jti)
+    else:
+        entries = ledger.read_all(limit=limit)
     return {
         "public_key_pem": ledger.public_key_pem(),
-        "entries": list(reversed(ledger.read_all(limit=limit))),
+        "entries": list(reversed(entries)),
     }
 
 
@@ -195,8 +209,14 @@ async def report(request: Request):
 
 
 @app.get("/v1/telemetry")
-def read_telemetry(limit: int = 200):
-    """Return recent self reported events for the trace view."""
+def read_telemetry(limit: int = 200, jti: str = None):
+    """Return recent self reported events for the trace view.
+
+    Passing jti returns every event for that token and ignores limit, for the
+    same reason as /v1/ledger.
+    """
+    if jti:
+        return {"events": telemetry.by_token(jti)}
     return {"events": telemetry.all_events(limit=limit)}
 
 
@@ -212,6 +232,65 @@ def containment_events():
     return {"auto_contain": AUTO_CONTAIN,
             "threshold": CONCEAL_THRESHOLD,
             "events": list(CONTAINED.values())}
+
+
+# Trace analysis published by analyzer/analyze.py, keyed by token id.
+#
+# This is a third trust level and the weakest of the three. The ledger is
+# evidence: signed, and captured by a component the agent cannot bypass. Agent
+# telemetry is narrative: unsigned, and credible only as far as reconciliation
+# can confirm it. Analysis is interpretation: derived from the other two, partly
+# produced by a model, and therefore a claim about the record rather than an
+# observation of anything.
+#
+# It is held here so the dashboard has one place to read it from. Nothing in the
+# request path reads it back. The proxy does not import the analyzer and never
+# calls a model, because a control that can be argued with is not a control, and
+# that property is what the rest of this design rests on.
+ANALYSES = {}
+ANALYSIS_LIMIT = 50
+
+
+@app.post("/v1/analysis")
+async def publish_analysis(request: Request):
+    """Accept one analysis document from the analyzer.
+
+    Unauthenticated and unvalidated for the same reason as /v1/report: nothing
+    stored here is treated as evidence, and nothing downstream acts on it.
+    """
+    from common import now_iso
+
+    document = await request.json()
+    jti = document.get("jti")
+    if not jti:
+        return JSONResponse({"error": "analysis must name a jti"}, status_code=400)
+
+    document["trust"] = "derived"
+    document["stored_at"] = now_iso()
+
+    # Re-inserting moves this token to the end, so the newest publication is
+    # always last and /v1/analysis with no argument returns it.
+    ANALYSES.pop(jti, None)
+    ANALYSES[jti] = document
+    while len(ANALYSES) > ANALYSIS_LIMIT:
+        ANALYSES.pop(next(iter(ANALYSES)))
+
+    return {"accepted": True, "jti": jti}
+
+
+@app.get("/v1/analysis")
+def read_analysis(jti: str = None):
+    """Return the analysis for one token, or the most recently published one."""
+    if jti:
+        document = ANALYSES.get(jti)
+    elif ANALYSES:
+        document = next(reversed(list(ANALYSES.values())), None)
+    else:
+        document = None
+
+    if document is None:
+        return {"available": False, "jti": jti, "analysed_tokens": len(ANALYSES)}
+    return dict(document, available=True)
 
 
 @app.get("/v1/export")

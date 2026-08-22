@@ -108,7 +108,7 @@ pause
 
 act "TRACE ANALYSIS" \
     "Findings computed in code first, a model only for what needs judgement."
-python3 analyzer/analyze.py --latest
+python3 analyzer/analyze.py --triage 12
 pause
 
 act "AUDIT  the evidence chain is intact" \

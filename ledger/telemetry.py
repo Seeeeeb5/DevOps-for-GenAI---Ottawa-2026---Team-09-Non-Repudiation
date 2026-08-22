@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS self_reported (
     evidence TEXT,
     attempt INTEGER
 );
+
+-- by_token() runs on every proxied call as part of the concealment check.
+CREATE INDEX IF NOT EXISTS idx_self_reported_jti ON self_reported (jti);
 """
 
 FIELDS = [

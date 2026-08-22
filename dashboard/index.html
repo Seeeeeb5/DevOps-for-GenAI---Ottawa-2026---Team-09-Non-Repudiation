@@ -9,6 +9,7 @@
     --bg: #0b0d11; --panel: #12151b; --line: #1f242d; --line2: #2b313c;
     --text: #e8eaed; --dim: #8992a1; --faint: #5a6270;
     --green: #4ade80; --red: #f87171; --amber: #fbbf24; --blue: #7dd3fc;
+    --violet: #b3a4f7;
   }
   * { box-sizing: border-box; }
   body {
@@ -26,7 +27,7 @@
   .stat { text-align: right; line-height: 1.25; }
   .stat .n { font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; }
   .stat .l { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
-  main { display: grid; grid-template-columns: 250px 1fr 320px; height: calc(100vh - 47px); }
+  main { display: grid; grid-template-columns: 240px 1fr 372px; height: calc(100vh - 47px); }
   .col { overflow-y: auto; padding: 12px 14px; }
   .col + .col { border-left: 1px solid var(--line); }
   h2 {
@@ -90,6 +91,43 @@
     padding: 10px 12px; margin-bottom: 10px; font-size: 11.5px; line-height: 1.55;
   }
   .banner .h { color: var(--amber); font-weight: 500; margin-bottom: 4px; }
+
+  /* Trust tier 3. The ledger is evidence and the agent's telemetry is
+     narrative; both are records of something that happened. Analysis is an
+     opinion about those records, so it is deliberately drawn as an annotation
+     rather than as data: dashed edge, no solid fill, its own accent colour.
+     Nothing in this panel should ever be mistaken for a signed entry. */
+  .derived {
+    border: 1px dashed #3f3a5c; border-left: 2px solid var(--violet);
+    border-radius: 9px; padding: 9px 11px; margin-bottom: 9px;
+    background: rgba(139,124,246,.045);
+  }
+  .derived .tag {
+    color: var(--violet); font-size: 9px; text-transform: uppercase;
+    letter-spacing: .7px; display: block; margin-bottom: 6px;
+  }
+  .finding { padding: 5px 0; border-top: 1px solid #1b1e2a; line-height: 1.5; }
+  .finding:first-of-type { border-top: 0; }
+  .finding .sev {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+    padding: 1px 5px; border-radius: 4px; margin-right: 5px;
+  }
+  .sev.critical { color: var(--red); background: #2c1414; }
+  .sev.high { color: #fca5a5; background: #2a1717; }
+  .sev.medium { color: var(--amber); background: #2a2109; }
+  .sev.low { color: var(--blue); background: #0e2029; }
+  .sev.info { color: var(--faint); background: #191c23; }
+  .finding .ty { color: var(--text); font-size: 11px; }
+  .finding .de { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .finding .no { color: var(--faint); font-size: 10px; margin-top: 2px; font-style: italic; }
+  details.merged { margin-top: 7px; }
+  details.merged summary {
+    color: var(--violet); font-size: 10px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: .6px;
+  }
+  .tl { font-size: 10.5px; padding: 2px 0 2px 7px; line-height: 1.45; }
+  .tl.t { border-left: 2px solid var(--green); color: var(--dim); }
+  .tl.u { border-left: 2px dashed var(--line2); color: var(--faint); }
 </style>
 </head>
 <body>
@@ -135,6 +173,8 @@
     <h2>Reconciliation</h2>
     <select id="tokenpick" onchange="loadRecon()"></select>
     <div id="recon"></div>
+    <h2 style="margin-top:14px">Analysis <span style="color:var(--violet)">derived, not evidence</span></h2>
+    <div id="analysis"></div>
     <h2 style="margin-top:14px">Agent's own account</h2>
     <div id="trace"></div>
   </div>
@@ -263,6 +303,75 @@ async function loadRecon() {
       </div>`).join("")
     : `<div class="empty">Nothing self reported under this token. The proxy
        still recorded everything it did.</div>`;
+
+  loadAnalysis();
+}
+
+const SEVERITIES = ["critical", "high", "medium", "low", "info"];
+
+function sevClass(s) {
+  return SEVERITIES.indexOf(s) >= 0 ? s : "info";
+}
+
+// Renders trust tier 3. Everything here is derived: computed by the analyzer
+// from the ledger and the agent's telemetry, and in part written by a model.
+// It is drawn as an annotation rather than as data on purpose, because the one
+// thing this panel must never do is look like a signed entry.
+async function loadAnalysis() {
+  const jti = document.getElementById("tokenpick").value;
+  const box = document.getElementById("analysis");
+  if (!jti) { box.innerHTML = ""; return; }
+
+  let a;
+  try { a = await j("/v1/analysis?jti=" + encodeURIComponent(jti)); }
+  catch (e) { return; }
+
+  if (!a.available) {
+    box.innerHTML = `<div class="empty">Nothing analysed for this token yet.<br>
+      <code>python3 analyzer/analyze.py --jti ${esc(jti)}</code></div>`;
+    return;
+  }
+
+  const s = a.summary || {};
+  const m = a.model_analysis;
+
+  const warn = s.trace_complete === false
+    ? `<div class="de" style="color:var(--red)">Based on a partial trace, so
+       findings may be wrong by omission.</div>` : "";
+
+  const findings = (a.findings || []).map(f => `<div class="finding">
+      <span class="sev ${sevClass(f.severity)}">${esc(f.severity)}</span>
+      <span class="ty">${esc(f.type)}</span>
+      <div class="de">${esc(f.detail)}</div>
+      ${f.note ? `<div class="no">${esc(f.note)}</div>` : ""}
+    </div>`).join("");
+
+  const model = m
+    ? `<div class="finding">
+         <span class="sev info">model</span><span class="ty">interpretation</span>
+         <div class="de">${esc(m.assessment || m.error || "")}</div>
+         ${m.proposed_instruction_change
+            ? `<div class="no">proposed instruction change:
+               ${esc(m.proposed_instruction_change)}</div>` : ""}
+       </div>`
+    : `<div class="no" style="margin-top:7px">Model interpretation not run.
+       Every finding above was computed in plain code from the two streams.</div>`;
+
+  const timeline = (a.timeline || []).map(t =>
+    `<div class="tl ${t.trusted ? "t" : "u"}">${esc(t.text)}</div>`).join("");
+
+  box.innerHTML = `<div class="derived">
+    <span class="tag">analyzer ${esc(a.analyzer_version || "?")} &middot;
+      interpretation, not a record</span>
+    <div class="kv"><span>headline</span><b>${esc(s.headline_severity || "-")}</b></div>
+    <div class="kv"><span>actions observed</span><b>${s.actions_observed}</b></div>
+    <div class="kv"><span>refused out of scope</span><b>${s.refused_out_of_scope}</b></div>
+    <div class="kv"><span>elapsed</span><b>${s.elapsed_seconds}s</b></div>
+    ${warn}${findings}${model}
+    <details class="merged">
+      <summary>merged timeline, both streams</summary>${timeline}
+    </details>
+  </div>`;
 }
 
 async function exportBundle() {
@@ -275,7 +384,7 @@ async function exportBundle() {
 }
 
 function tick() {
-  loadAgents(); loadLedger(); loadTokens(); loadContainment();
+  loadAgents(); loadLedger(); loadTokens(); loadContainment(); loadAnalysis();
 }
 tick();
 setInterval(tick, 1500);

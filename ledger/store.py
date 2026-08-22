@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS entries (
     entry_hash TEXT NOT NULL,
     signature TEXT NOT NULL
 );
+
+-- Reconciliation and containment read one token's entries on every proxied
+-- call. Without this the read is a full table scan, so the cost of each call
+-- grows with the size of the ledger. The index covers no signed field and
+-- changes no hash.
+CREATE INDEX IF NOT EXISTS idx_entries_jti ON entries (jti);
 """
 
 # Fields that are covered by the hash and the signature. Order is fixed.
@@ -154,5 +160,20 @@ class Ledger:
                 int(limit)
             )
         rows = [dict(r) for r in conn.execute(query).fetchall()]
+        conn.close()
+        return rows
+
+    def by_token(self, jti):
+        """Return every entry recorded under one token, oldest first.
+
+        Callers interested in a single token should use this instead of
+        read_all(). Reconciliation runs on every proxied call, and a token
+        lives for two minutes, so the set this returns is small and bounded
+        no matter how large the ledger grows.
+        """
+        conn = self._connect()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM entries WHERE jti = ? ORDER BY seq ASC", (jti,)
+        ).fetchall()]
         conn.close()
         return rows

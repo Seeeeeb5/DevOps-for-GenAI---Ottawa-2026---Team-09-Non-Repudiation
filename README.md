@@ -126,11 +126,11 @@ agent/unprotected.py control run with no broker, proxy or ledger
 agent/isolation.py   two agents, one revoked, the other unaffected
 agent/github_demo.py the same governance against api.github.com
 triggers/webhook.py  CI event receiver that dispatches agents
-attacks/run_attacks.py  eleven adversarial scenarios with expected outcomes
+attacks/run_attacks.py  twenty-four adversarial scenarios with expected outcomes
 scripts/benchmark.py measured proxy overhead
 analyzer/analyze.py  rule based and model based trace analysis
 scripts/demo.sh      narrated end to end demo for the presentation
-tests/               42 unit and integration tests
+tests/               117 unit and integration tests
 audit.py             standalone third party auditor, zero project imports
 docs/PITCH.md        slide content, judge questions, demo runbook
 docs/THREAT_MODEL.md what is defended, what is not, what is assumed
@@ -148,9 +148,10 @@ python3 scripts/benchmark.py              # measured overhead
 python3 agent/github_demo.py              # real GitHub API, same governance
 python3 agent/containment.py              # the agent lies, the system stops it
 python3 audit.py evidence-bundle.json     # independent audit, no imports from us
-python3 -m pytest tests/ -v               # 36 tests
+python3 -m pytest tests/ -v               # 117 tests, 42 need the stack up
 python3 agent/investigator.py --offline   # agent loop, no API key needed
-python3 attacks/run_attacks.py            # nine adversarial scenarios
+python3 attacks/run_attacks.py            # twenty-four adversarial scenarios
+python3 analyzer/analyze.py --triage      # rank recent runs by what needs attention
 python3 analyzer/analyze.py --latest      # analyse the most recent trace
 ```
 
@@ -163,9 +164,22 @@ traversal, method swapping, a missing token and a forged token. Each scenario
 declares the outcome it expects, so the security claim is measurable rather
 than asserted.
 
-`analyzer/analyze.py` computes findings in plain code first (duplicate calls,
-denied attempts, retry loops, cost, telemetry mismatch) and only asks a model
-for the parts that need judgement.
+`analyzer/analyze.py` reads both streams for one token, merges them into one
+ordered timeline and computes twelve findings in plain code before a model is
+involved at all: the probable carrier of an injected instruction, refusals
+weighted by the risk the policy file assigns them, activity attempted after
+revocation, scopes granted but never used, writes that happened before any
+read, hypotheses that were never tested, confidence that never moved, repeated
+calls, retry loops, cost, concealment, and whether the trace it is looking at
+is even complete. A model is then asked only for interpretation: whether the
+investigation order made sense and what should change. `--triage` ranks recent
+runs so nobody has to pick a token id off a screen.
+
+Analysis is a third trust level and the weakest one. The ledger is evidence,
+agent telemetry is narrative, and analysis is an opinion about both. It is
+published to `/v1/analysis`, rendered in the dashboard as visibly derived
+rather than recorded, and read back by nothing that makes a decision. No model
+runs anywhere in the request path.
 
 ## Owners
 
