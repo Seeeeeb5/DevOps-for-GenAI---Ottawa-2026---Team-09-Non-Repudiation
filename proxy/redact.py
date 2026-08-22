@@ -13,7 +13,10 @@ PATTERNS = [
     ("BEARER", re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{20,}")),
     ("PRIVATE_KEY", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("API_KEY", re.compile(r"(?i)(api[_-]?key|secret|password|token)\"?\s*[:=]\s*\"?[A-Za-z0-9._\-]{8,}")),
-    ("IPV4", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")),
+    ("IPV4", re.compile(
+        r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+        r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+    )),
 ]
 
 
