@@ -75,14 +75,19 @@ python ledger/verify.py --db data/ledger.db --key data/ledger_key.pem
 
 Write-Host ""
 Write-Host "=" * 72
-Write-Host "ALL DONE. Dashboard still live at http://127.0.0.1:8080/"
-Write-Host "Press Enter to shut down services..."
+Write-Host "ALL DONE. Starting live traffic simulator..."
+Write-Host "Dashboard: http://127.0.0.1:8080/"
+Write-Host "Live traffic running (Ctrl+C to stop and shut down)"
 Write-Host "=" * 72
-Read-Host
 
-# Cleanup
-Write-Host "Shutting down..."
-Stop-Process -Id $broker.Id -Force -ErrorAction SilentlyContinue
-Stop-Process -Id $target.Id -Force -ErrorAction SilentlyContinue
-Stop-Process -Id $proxy.Id -Force -ErrorAction SilentlyContinue
-Write-Host "Done."
+# Start live traffic in foreground (Ctrl+C stops it and triggers cleanup)
+try {
+    python scripts/live_traffic.py --fast
+} finally {
+    # Cleanup
+    Write-Host "Shutting down..."
+    Stop-Process -Id $broker.Id -Force -ErrorAction SilentlyContinue
+    Stop-Process -Id $target.Id -Force -ErrorAction SilentlyContinue
+    Stop-Process -Id $proxy.Id -Force -ErrorAction SilentlyContinue
+    Write-Host "Done."
+}
