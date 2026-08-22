@@ -372,13 +372,13 @@ def export_bundle():
 
 
 @app.get("/v1/tokens")
-def list_tokens():
-    """List the token ids seen in the ledger, newest first, for the dashboard."""
-    seen = []
-    for entry in reversed(ledger.read_all()):
-        if entry.get("jti") and entry["jti"] not in seen:
-            seen.append(entry["jti"])
-    return {"tokens": seen}
+def list_tokens(limit: int = None):
+    """List the token ids seen in the ledger, newest first, for the dashboard.
+
+    Polled by the dashboard every 1.5s and by the analyzer watcher, so it does
+    the grouping in SQL rather than scanning the whole ledger in Python.
+    """
+    return {"tokens": ledger.token_ids(limit=limit)}
 
 
 @app.get("/v1/agents")

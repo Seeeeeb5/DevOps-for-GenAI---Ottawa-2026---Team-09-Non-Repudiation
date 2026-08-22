@@ -177,3 +177,21 @@ class Ledger:
         ).fetchall()]
         conn.close()
         return rows
+
+    def token_ids(self, limit=None):
+        """Distinct token ids, most recently active first.
+
+        Doing this in SQL rather than by scanning read_all() and filtering in
+        Python matters once anything polls it. The Python version loaded every
+        row and every column and then did a linear membership check per row,
+        which is quadratic; with the live traffic simulator running and the
+        analyzer watching for new tokens, that is on a timer.
+        """
+        query = ("SELECT jti FROM entries WHERE jti IS NOT NULL "
+                 "GROUP BY jti ORDER BY MAX(seq) DESC")
+        if limit:
+            query += " LIMIT {}".format(int(limit))
+        conn = self._connect()
+        rows = [r["jti"] for r in conn.execute(query).fetchall()]
+        conn.close()
+        return rows

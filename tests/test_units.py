@@ -164,6 +164,52 @@ class TestLedger:
         assert len(entries) == 1
         assert entries[0]["decision"] == "DENY"
 
+    def test_by_token_returns_only_that_token(self):
+        """Reconciliation runs on every call, so it must not read the whole
+        ledger to find the handful of entries belonging to one token."""
+        ledger = self._fresh()
+        for jti in ("jti-a", "jti-b", "jti-a"):
+            record = self._record()
+            record["jti"] = jti
+            ledger.append(record)
+        assert [e["seq"] for e in ledger.by_token("jti-a")] == [1, 3]
+        assert len(ledger.by_token("jti-b")) == 1
+        assert ledger.by_token("jti-missing") == []
+
+    def test_by_token_returns_entries_in_order(self):
+        ledger = self._fresh()
+        for _ in range(3):
+            ledger.append(self._record())
+        assert [e["seq"] for e in ledger.by_token("jti-1")] == [1, 2, 3]
+
+    def test_token_ids_are_distinct_and_most_recent_first(self):
+        ledger = self._fresh()
+        for jti in ("jti-a", "jti-b", "jti-a", "jti-c"):
+            record = self._record()
+            record["jti"] = jti
+            ledger.append(record)
+        # jti-a appears twice but is listed once, ordered by its latest entry.
+        assert ledger.token_ids() == ["jti-c", "jti-a", "jti-b"]
+
+    def test_token_ids_respects_a_limit(self):
+        ledger = self._fresh()
+        for jti in ("jti-a", "jti-b", "jti-c"):
+            record = self._record()
+            record["jti"] = jti
+            ledger.append(record)
+        assert ledger.token_ids(limit=2) == ["jti-c", "jti-b"]
+
+    def test_token_ids_skips_entries_with_no_token(self):
+        """A call refused before the token was read has no jti to report."""
+        ledger = self._fresh()
+        record = self._record()
+        record["jti"] = None
+        ledger.append(record)
+        assert ledger.token_ids() == []
+
+    def test_token_ids_on_an_empty_ledger(self):
+        assert self._fresh().token_ids() == []
+
 
 class TestReconciliation:
     def _ledger_entry(self, method, path, jti="j1"):
