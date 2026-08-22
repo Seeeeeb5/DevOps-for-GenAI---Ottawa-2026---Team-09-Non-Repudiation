@@ -172,6 +172,7 @@
   <div class="col">
     <h2>Reconciliation</h2>
     <select id="tokenpick" onchange="loadRecon()"></select>
+    <button onclick="selectedJti=null;loadLedger();" style="margin-left:6px;font-size:11px">Show all</button>
     <div id="recon"></div>
     <h2 style="margin-top:14px">Analysis <span style="color:var(--violet)">derived, not evidence</span></h2>
     <div id="analysis"></div>
@@ -184,6 +185,7 @@
 const BROKER = "http://127.0.0.1:8081";
 let seen = new Set();
 let firstLoad = true;
+let selectedJti = null;  // null = show all, otherwise filter by token
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c => (
@@ -224,7 +226,13 @@ async function setState(id, action) {
 
 async function loadLedger() {
   const data = await j("/v1/ledger?limit=80");
-  const entries = data.entries;
+  let entries = data.entries;
+
+  // Filter by selected token if one is active
+  const filtered = selectedJti
+    ? entries.filter(e => e.jti === selectedJti)
+    : entries;
+
   document.getElementById("s-total").textContent = entries.length;
   document.getElementById("s-allow").textContent =
     entries.filter(e => e.decision === "ALLOW").length;
@@ -233,7 +241,7 @@ async function loadLedger() {
   if (entries.length) document.getElementById("head").textContent =
     entries[0].entry_hash.slice(0, 40);
 
-  document.getElementById("rows").innerHTML = entries.map(e => {
+  document.getElementById("rows").innerHTML = filtered.map(e => {
     const isNew = !firstLoad && !seen.has(e.seq);
     seen.add(e.seq);
     const cls = e.decision.toLowerCase();
@@ -279,6 +287,8 @@ async function loadTokens() {
 async function loadRecon() {
   const jti = document.getElementById("tokenpick").value;
   if (!jti) return;
+  selectedJti = jti;
+  loadLedger();  // Re-render ledger filtered to this token
   const r = await j("/v1/reconcile/" + jti);
   const ok = r.verdict === "CONSISTENT";
   document.getElementById("recon").innerHTML = `
